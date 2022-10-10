@@ -10,36 +10,36 @@ use sleigh_rs::semantic::disassembly::{
 };
 use sleigh_rs::Varnode;
 
-pub trait DisassemblyGenerator {
-    fn global_set(&mut self, global_set: &GlobalSet) -> TokenStream;
-    fn value(&mut self, value: &ReadScope) -> TokenStream;
+fn disassembly_op(op: &Op) -> TokenStream {
+    match op {
+        Op::Add => quote! {+},
+        Op::Sub => quote! {-},
+        Op::Mul => quote! {*},
+        Op::Div => quote! {/},
+        Op::Asr => quote! {>>},
+        Op::Lsl => quote! {<<},
+        Op::And => quote! {&},
+        Op::Or => quote! {|},
+        Op::Xor => quote! {^},
+    }
+}
+pub trait DisassemblyGenerator<'a> {
+    fn global_set(&mut self, global_set: &'a GlobalSet) -> TokenStream;
+    fn value(&mut self, value: &'a ReadScope) -> TokenStream;
     fn set_context(
         &mut self,
-        context: &Rc<Varnode>,
+        context: &'a Varnode,
         value: TokenStream,
     ) -> TokenStream;
-    fn new_variable(&mut self, var: &Rc<Variable>);
-    fn var_name(&mut self, var: &Rc<Variable>) -> TokenStream;
-    fn op(&mut self, op: &Op) -> TokenStream {
-        match op {
-            Op::Add => quote! {+},
-            Op::Sub => quote! {-},
-            Op::Mul => quote! {*},
-            Op::Div => quote! {/},
-            Op::Asr => quote! {>>},
-            Op::Lsl => quote! {<<},
-            Op::And => quote! {&},
-            Op::Or => quote! {|},
-            Op::Xor => quote! {^},
-        }
-    }
-    fn op_unary(&mut self, op: &OpUnary) -> TokenStream {
+    fn new_variable(&mut self, var: &'a Variable);
+    fn var_name(&mut self, var: &'a Variable) -> TokenStream;
+    fn op_unary(&mut self, op: &'a OpUnary) -> TokenStream {
         match op {
             OpUnary::Negation => quote! {!},
             OpUnary::Negative => quote! {-},
         }
     }
-    fn expr(&mut self, expr: &Expr) -> TokenStream {
+    fn expr(&mut self, expr: &'a Expr) -> TokenStream {
         let mut work_stack: Vec<_> = Vec::with_capacity(2);
         for ele in expr.rpn.iter() {
             //the rpn stack that result in a work_stack bigger then 2 is invalid
@@ -48,7 +48,7 @@ pub trait DisassemblyGenerator {
                     work_stack.push(self.value(value))
                 }
                 (ExprElement::Op(op), 2..) => {
-                    let op = self.op(op);
+                    let op = disassembly_op(op);
                     let y = work_stack.pop().unwrap();
                     let x = work_stack.pop().unwrap();
                     work_stack.push(quote! {(#x #op #y)});
@@ -69,13 +69,13 @@ pub trait DisassemblyGenerator {
     }
     fn set_variable(
         &mut self,
-        var: &Rc<Variable>,
+        var: &'a Variable,
         value: TokenStream,
     ) -> TokenStream {
         let var_name = self.var_name(var);
         quote! { #var_name = #value; }
     }
-    fn assignment(&mut self, ass: &Assignment) -> TokenStream {
+    fn assignment(&mut self, ass: &'a Assignment) -> TokenStream {
         use sleigh_rs::semantic::disassembly::WriteScope::*;
         let value = self.expr(&ass.right);
         match &ass.left {
@@ -85,8 +85,8 @@ pub trait DisassemblyGenerator {
     }
     fn disassembly(
         &mut self,
-        vars: &HashMap<Rc<str>, Rc<Variable>>,
-        assertations: &Vec<Assertation>,
+        vars: &'a HashMap<Rc<str>, Rc<Variable>>,
+        assertations: &'a Vec<Assertation>,
     ) -> TokenStream {
         for var in vars.values() {
             self.new_variable(var)

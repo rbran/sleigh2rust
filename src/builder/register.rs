@@ -8,43 +8,44 @@ use sleigh_rs::Varnode;
 use super::formater::*;
 
 #[derive(Clone, Debug)]
-pub struct RegistersEnum {
+pub struct RegistersEnum<'a> {
     name: Ident,
-    registers: Vec<(Ident, Rc<Varnode>)>,
+    registers: Vec<(Ident, &'a Varnode)>,
 }
 
-impl RegistersEnum {
+impl<'a> RegistersEnum<'a> {
     pub fn new_empty(name: Ident) -> Self {
         Self {
             name,
             registers: Vec::new(),
         }
     }
-    pub fn from_all(name: Ident, sleigh: &sleigh_rs::Sleigh) -> Self {
-        let iter = sleigh.varnodes();
+    pub fn from_all(name: Ident, sleigh: &'a sleigh_rs::Sleigh) -> Self {
+        let iter = sleigh.varnodes().map(|x| x.as_ref());
         Self::from_iterator(name, iter)
     }
-    pub fn from_context(name: Ident, sleigh: &sleigh_rs::Sleigh) -> Self {
+    pub fn from_context(name: Ident, sleigh: &'a sleigh_rs::Sleigh) -> Self {
         let iter = sleigh
             .varnodes()
-            .filter(|varnode| varnode.context().is_some());
+            .filter(|varnode| varnode.context().is_some())
+            .map(|x| x.as_ref());
         Self::from_iterator(name, iter)
     }
 
     //enum from only the Registers that can be printed
-    pub fn from_printable(name: Ident, sleigh: &sleigh_rs::Sleigh) -> Self {
+    pub fn from_printable(name: Ident, sleigh: &'a sleigh_rs::Sleigh) -> Self {
         let mut iter_vec = Vec::new();
         let mut iter_set = HashSet::new();
         let iter_vec_ptr: *mut Vec<_> = &mut iter_vec;
         let iter_set_ptr: *mut HashSet<_> = &mut iter_set;
 
-        let add_reg = |reg: &Rc<sleigh_rs::Varnode>| {
-            let ptr = Rc::as_ptr(reg);
+        let add_reg = |reg: &'a sleigh_rs::Varnode| {
+            let ptr: *const _ = reg;
             //iter_vec/iter_set is only used here, so this is fine
             unsafe {
                 if !(*iter_set_ptr).contains(&ptr) {
                     (*iter_set_ptr).insert(ptr);
-                    (*iter_vec_ptr).push(Rc::clone(reg));
+                    (*iter_vec_ptr).push(reg);
                 }
             }
         };
@@ -64,6 +65,12 @@ impl RegistersEnum {
             {
                 vars.iter().filter_map(|x| x.as_ref()).for_each(|var| {
                     added |= true;
+                    let var = sleigh
+                        .global_scope
+                        .get(&var.name)
+                        .unwrap()
+                        .unwrap_varnode()
+                        .unwrap();
                     add_reg(var)
                 })
             }
@@ -105,14 +112,12 @@ impl RegistersEnum {
 
     pub fn from_iterator(
         name: Ident,
-        registers: impl Iterator<Item = Rc<Varnode>>,
+        registers: impl Iterator<Item = &'a Varnode> + 'a,
     ) -> Self {
         let registers = registers
             .map(|register| {
-                let name = format_ident!(
-                    "{}",
-                    upper_cammel_case(from_sleigh(register.name.as_ref()))
-                );
+                let name =
+                    format_ident!("{}", from_sleigh(register.name.as_ref()));
                 (name, register)
             })
             .collect();
@@ -121,16 +126,16 @@ impl RegistersEnum {
     pub fn name(&self) -> &Ident {
         &self.name
     }
-    pub fn registers(&self) -> impl Iterator<Item = &(Ident, Rc<Varnode>)> {
+    pub fn registers(&self) -> impl Iterator<Item = &(Ident, &'a Varnode)> {
         self.registers.iter()
     }
     pub fn register(
         &self,
-        register: &Rc<Varnode>,
-    ) -> Option<&(Ident, Rc<Varnode>)> {
-        let ptr = Rc::as_ptr(register);
+        register: &'a Varnode,
+    ) -> Option<&(Ident, &'a Varnode)> {
+        let ptr: *const Varnode = register;
         self.registers()
-            .find(|(_name, register)| Rc::as_ptr(&register) == ptr)
+            .find(|(_name, register)| *register as *const Varnode == ptr)
     }
     pub fn generate(&self) -> TokenStream {
         let name = self.name();

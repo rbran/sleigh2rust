@@ -7,23 +7,25 @@ use sleigh_rs::IntTypeS;
 use super::{DisplayElement, RegistersEnum};
 
 #[derive(Debug, Clone)]
-pub struct Meaning {
+pub struct Meaning<'a> {
     name: Ident,
+    //TODO remove this Rc by removing RefCell from the final values in sleigh_rs
     sleigh: Rc<sleigh_rs::semantic::Meaning>,
-    registers: Rc<RegistersEnum>,
+    registers: Rc<RegistersEnum<'a>>,
     display: Rc<DisplayElement>,
 }
 
-impl Meaning {
+impl<'a> Meaning<'a> {
     pub fn new(
-        sleigh: Rc<sleigh_rs::semantic::Meaning>,
-        registers: Rc<RegistersEnum>,
+        sleigh: &Rc<sleigh_rs::semantic::Meaning>,
+        registers: Rc<RegistersEnum<'a>>,
         display: Rc<DisplayElement>,
     ) -> Self {
-        let name = format_ident!("meaning_{}", Rc::as_ptr(&sleigh) as usize);
+        let ptr: *const _ = Rc::as_ptr(sleigh);
+        let name = format_ident!("meaning_{}", ptr as usize);
         Self {
             name,
-            sleigh,
+            sleigh: Rc::clone(sleigh),
             registers,
             display,
         }
@@ -31,11 +33,11 @@ impl Meaning {
     pub fn name(&self) -> &Ident {
         &self.name
     }
-    pub fn sleigh(&self) -> &Rc<sleigh_rs::semantic::Meaning> {
+    pub fn sleigh(&self) -> &sleigh_rs::semantic::Meaning {
         &self.sleigh
     }
     pub fn generate(&self) -> TokenStream {
-        match self.sleigh().as_ref() {
+        match self.sleigh() {
             sleigh_rs::semantic::Meaning::Variable { size: _, vars } => {
                 self.gen_variable(&vars)
             }

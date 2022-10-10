@@ -5,34 +5,50 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 mod table;
+use sleigh_rs::NonZeroTypeU;
 pub use table::*;
 
 mod constructor;
 pub use constructor::*;
 
 use super::{
-    ContextStruct, ContextTrait, DisplayElement, GlobalSet, Meaning,
-    RegistersEnum, TokenParser, WorkType,
+    gen_token_parsers, ContextStruct, ContextTrait, DisplayElement,
+    GlobalSetTrait, Meaning, RegistersEnum, TokenParser, WorkType,
 };
 
 #[derive(Debug, Clone)]
-pub struct Disassembler {
-    context_trait: ContextTrait,
-    context_struct: ContextStruct,
-    global_set: GlobalSet,
+pub struct Disassembler<'a> {
+    //enum with all the registers used (or possibly used) by the to display
+    registers: Rc<RegistersEnum<'a>>,
+    //all the interger -> interger/name/register translations,
+    //AKA `attach values/names/variables`
+    meanings: HashMap<*const sleigh_rs::semantic::Meaning, Meaning<'a>>,
+    //all structs able to parse tokens
+    token_parsers: HashMap<NonZeroTypeU, TokenParser<'a>>,
+    //a trait can can read/write to all context variables from all spaces
+    context_trait: ContextTrait<'a>,
+    //abstraction for the `global_set` call that happen in disassembly_pos
+    global_set: GlobalSetTrait<'a>,
+    //a basic struct that store all the context variables from all spaces, plus
+    //implments context_trait
+    context_struct: ContextStruct<'a>,
+    //all possible display elements: Literal/Register/Value
     display: Rc<DisplayElement>,
-    registers: Rc<RegistersEnum>,
-    tables: HashMap<*const sleigh_rs::Table, Rc<Table>>,
-    meanings: HashMap<*const sleigh_rs::semantic::Meaning, Meaning>,
-    token: TokenParser,
+    //all tables, that will implement parser/disassembly/display
+    tables: HashMap<*const sleigh_rs::Table, Rc<Table<'a>>>,
     inst_work_type: WorkType,
 }
-impl Disassembler {
-    pub fn new(sleigh: &sleigh_rs::Sleigh) -> Self {
+impl<'a> Disassembler<'a> {
+    pub fn new(sleigh: &'a sleigh_rs::Sleigh) -> Self {
         let context_trait = ContextTrait::new(sleigh);
         let context_struct = ContextStruct::new(sleigh);
 
-        let token = TokenParser::new(sleigh);
+        let token_parsers = gen_token_parsers(sleigh)
+            .map(|parser| {
+                let len = parser.token_len();
+                (len, parser)
+            })
+            .collect();
         let registers = Rc::new(RegistersEnum::from_printable(
             format_ident!("Register"),
             sleigh,
@@ -69,7 +85,11 @@ impl Disassembler {
         for attach in varnodes_attachs.chain(assembly_attachs) {
             let ptr = Rc::as_ptr(&attach);
             meanings.entry(ptr).or_insert_with(|| {
-                Meaning::new(attach, Rc::clone(&registers), Rc::clone(&display))
+                Meaning::new(
+                    &attach,
+                    Rc::clone(&registers),
+                    Rc::clone(&display),
+                )
             });
         }
         let inst_work_type =
@@ -91,7 +111,7 @@ impl Disassembler {
                 }
                 _ => unreachable!(),
             };
-        let global_set = GlobalSet::new(format_ident!("GlobalSet"), sleigh);
+        let global_set = GlobalSetTrait::new(sleigh);
         let value = Self {
             context_trait,
             context_struct,
@@ -100,43 +120,49 @@ impl Disassembler {
             registers,
             tables,
             meanings,
-            token,
+            token_parsers,
             inst_work_type,
         };
         value.tables.values().for_each(|table| {
-            table.add_constructors(&value);
+            table.add_constructors();
         });
         value
     }
-    pub fn pattern(&self, table: &Rc<sleigh_rs::Table>) -> &Rc<Table> {
-        self.tables.get(&Rc::as_ptr(table)).unwrap()
+    pub fn pattern(&self, table: *const sleigh_rs::Table) -> &Table<'a> {
+        self.tables.get(&table).unwrap()
+    }
+    pub fn token_parser(&self, ass: &sleigh_rs::Assembly) -> &TokenParser {
+        let len = ass.field().unwrap().token.size;
+        self.token_parsers.get(&len).unwrap()
     }
     pub fn generate(&self) -> TokenStream {
         let meaning_solvers = self.meanings.values().map(|x| x.generate());
-        let token = self.token.gen_struct();
+        let token_parsers = self
+            .token_parsers
+            .values()
+            .map(TokenParser::gen_struct_and_impl);
         let context_trait_def = self.context_trait.gen_trait();
         let context_struct_def = self.context_struct.gen_struct();
         let context_struct_impl_context_trait =
             self.context_struct.impl_context_trait(&self.context_trait);
-        let enums = self.tables.values().map(|table| {
-            let def = table.gen_enum();
-            let parse = table.gen_parse(&self);
-            quote! {#def #parse}
-        });
+        let tables = self
+            .tables
+            .values()
+            .map(|table| self.gen_table_and_bitches(table));
         let registers_enum = self.registers.generate();
         let display_element =
             self.display.gen_display_element_enum(self.registers.name());
         let global_set = self.global_set.generate(&self.inst_work_type);
         quote! {
             #(#meaning_solvers)*
-            #token
+            #(#token_parsers)*
             #global_set
             #context_trait_def
             #context_struct_def
             #context_struct_impl_context_trait
             #registers_enum
             #display_element
-            #(#enums)*
+            #(#tables)*
         }
     }
 }

@@ -31,8 +31,6 @@ fn bitrange_size(
     (addr, byte_len, work_type, bit_len, bit_mask)
 }
 
-const MEMORY_TRAIT_SPACE_READ: &str = "read";
-const MEMORY_TRAIT_SPACE_WRITE: &str = "write";
 #[derive(Debug, Clone)]
 pub struct MemoryTraitSpace {
     read: Ident,
@@ -41,18 +39,12 @@ pub struct MemoryTraitSpace {
     //sleigh: Rc<sleigh_rs::Space>,
 }
 impl MemoryTraitSpace {
-    pub fn new(sleigh: Rc<sleigh_rs::Space>) -> Self {
-        let space_name = snake_case(from_sleigh(&sleigh.name));
-        let read = format_ident!(
-            "{}",
-            &snake_case([MEMORY_TRAIT_SPACE_READ, &space_name].into_iter())
-        );
+    pub fn new(sleigh: &sleigh_rs::Space) -> Self {
+        let space_name = from_sleigh(&sleigh.name);
+        let read = format_ident!("read_{}", space_name);
         use sleigh_rs::semantic::space::SpaceType::*;
-        let write = (!matches!(&sleigh.space_type, Rom(_))).then(|| {
-            let name =
-                snake_case([MEMORY_TRAIT_SPACE_WRITE, &space_name].into_iter());
-            format_ident!("{}", &name)
-        });
+        let write = (!matches!(&sleigh.space_type, Rom(_)))
+            .then(|| format_ident!("write_{}", space_name));
         Self {
             read,
             write,
@@ -72,29 +64,28 @@ impl MemoryTraitSpace {
 const MEMORY_TRAIT_VARNODE_READ: &str = "read";
 const MEMORY_TRAIT_VARNODE_WRITE: &str = "write";
 #[derive(Debug, Clone)]
-pub struct MemoryTraitVarnode {
+pub struct MemoryTraitVarnode<'a> {
     //the name that is conventional to use as variable
+    //TODO remove this
     name: Ident,
+    //TODO remote this, no need to store this, it can be calculated on demand
+    //from the varnode itself
     return_type: WorkType,
     read: Ident,
     //write function only Some if is not a Read-Only address space
     write: Option<Ident>,
-    sleigh: Rc<sleigh_rs::Varnode>,
+    sleigh: &'a sleigh_rs::Varnode,
 }
 
-impl MemoryTraitVarnode {
-    pub fn new(varnode: Rc<sleigh_rs::Varnode>) -> Self {
-        let name = snake_case(from_sleigh(&varnode.name));
-        let read = format_ident!(
-            "{}",
-            &snake_case([&name, MEMORY_TRAIT_VARNODE_READ].into_iter())
-        );
-        let write = varnode.space().space_type.can_write().then(|| {
-            format_ident!(
-                "{}",
-                &snake_case([&name, MEMORY_TRAIT_VARNODE_WRITE].into_iter())
-            )
-        });
+impl<'a> MemoryTraitVarnode<'a> {
+    pub fn new(varnode: &'a sleigh_rs::Varnode) -> Self {
+        let name = from_sleigh(&varnode.name);
+        let read = format_ident!("read_{}", name);
+        let write = varnode
+            .space()
+            .space_type
+            .can_write()
+            .then(|| format_ident!("write_{}", name));
         let return_type = WorkType::from_varnode(&varnode);
         let name = format_ident!("{}", name);
         Self {
@@ -214,20 +205,17 @@ impl MemoryTraitVarnode {
 
 const MEMORY_TRAIT_NAME: [&str; 3] = [SLEIGH_IDENT, "memory", "trait"];
 #[derive(Debug, Clone)]
-pub struct MemoryTrait {
+pub struct MemoryTrait<'a> {
     //trait name
     name: Ident,
     //addressable spaces read/write function names
     spaces: HashMap<*const sleigh_rs::Space, MemoryTraitSpace>,
-    varnodes: HashMap<*const sleigh_rs::Varnode, MemoryTraitVarnode>,
+    varnodes: HashMap<*const sleigh_rs::Varnode, MemoryTraitVarnode<'a>>,
 }
 
-impl MemoryTrait {
-    pub fn new(sleigh: &sleigh_rs::Sleigh) -> Self {
-        let name = format_ident!(
-            "{}",
-            &upper_cammel_case(MEMORY_TRAIT_NAME.into_iter())
-        );
+impl<'a> MemoryTrait<'a> {
+    pub fn new(sleigh: &'a sleigh_rs::Sleigh) -> Self {
+        let name = format_ident!("memory_trait");
         let spaces = sleigh
             .spaces()
             .map(|space| (Rc::as_ptr(&space), MemoryTraitSpace::new(space)))
@@ -235,7 +223,7 @@ impl MemoryTrait {
         let varnodes = sleigh
             .varnodes()
             .map(|varnode| {
-                (Rc::as_ptr(&varnode), MemoryTraitVarnode::new(varnode))
+                (Rc::as_ptr(&varnode), MemoryTraitVarnode::new(&varnode))
             })
             .collect();
         Self {
@@ -287,8 +275,8 @@ impl MemoryTrait {
         let trait_name = &context.name;
         let memory_name = &self.name;
         let varnodes_impl = context.varnodes.values().map(|varnode| {
-            let memory_varnode =
-                self.varnodes.get(&Rc::as_ptr(&varnode.sleigh)).unwrap();
+            let varnode_ptr: *const sleigh_rs::Varnode = varnode.sleigh;
+            let memory_varnode = self.varnodes.get(&varnode_ptr).unwrap();
             let memory_read_func = &memory_varnode.read;
             let return_type = &memory_varnode.return_type;
             let read_func = &varnode.read;
@@ -318,23 +306,19 @@ impl MemoryTrait {
     }
 }
 
-const CONTEXT_TRAIT_NAME: [&str; 3] = [SLEIGH_IDENT, "context", "trait"];
 #[derive(Debug, Clone)]
-pub struct ContextTrait {
+pub struct ContextTrait<'a> {
     name: Ident,
-    varnodes: HashMap<*const sleigh_rs::Varnode, MemoryTraitVarnode>,
+    varnodes: HashMap<*const sleigh_rs::Varnode, MemoryTraitVarnode<'a>>,
 }
-impl ContextTrait {
-    pub fn new(sleigh: &sleigh_rs::Sleigh) -> Self {
-        let name = format_ident!(
-            "{}",
-            &upper_cammel_case(CONTEXT_TRAIT_NAME.into_iter())
-        );
+impl<'a> ContextTrait<'a> {
+    pub fn new(sleigh: &'a sleigh_rs::Sleigh) -> Self {
+        let name = format_ident!("ContextTrait");
         let varnodes = sleigh
             .varnodes()
             .filter(|varnode| varnode.varnode_type.is_context())
             .map(|varnode| {
-                (Rc::as_ptr(&varnode), MemoryTraitVarnode::new(varnode))
+                (Rc::as_ptr(&varnode), MemoryTraitVarnode::new(&varnode))
             })
             .collect();
         Self { name, varnodes }
@@ -342,11 +326,11 @@ impl ContextTrait {
     pub fn name(&self) -> &Ident {
         &self.name
     }
-    pub fn varnode<'a>(
-        &'a self,
-        value: &Rc<sleigh_rs::Varnode>,
-    ) -> &'a MemoryTraitVarnode {
-        self.varnodes.get(&Rc::as_ptr(value)).unwrap()
+    pub fn varnode(
+        &self,
+        ptr: *const sleigh_rs::Varnode,
+    ) -> &MemoryTraitVarnode {
+        self.varnodes.get(&ptr).unwrap()
     }
     pub fn gen_trait(&self) -> TokenStream {
         let name = &self.name;
@@ -374,22 +358,18 @@ impl ContextTrait {
     }
 }
 
-const MEMORY_STRUCT_NAME: [&str; 2] = [SLEIGH_IDENT, "memory"];
 const MEMORY_SPACE_PREFIX: [&str; 3] = [SLEIGH_IDENT, "memory", "space"];
 #[derive(Debug, Clone)]
-pub struct MemoryStruct {
+pub struct MemoryStruct<'a> {
     //name of the global memory struct
     name: Ident,
     //spaces that this struct can read/write
-    spaces: HashMap<*const sleigh_rs::Space, (Ident, SpaceStruct)>,
+    spaces: HashMap<*const sleigh_rs::Space, (Ident, SpaceStruct<'a>)>,
 }
 
-impl MemoryStruct {
-    pub fn new(sleigh: &Sleigh) -> Self {
-        let name = format_ident!(
-            "{}",
-            &upper_cammel_case(MEMORY_STRUCT_NAME.into_iter())
-        );
+impl<'a> MemoryStruct<'a> {
+    pub fn new(sleigh: &'a Sleigh) -> Self {
+        let name = format_ident!("memory");
         //iterator for all varnodes to this space
         let spaces = sleigh
             .spaces()
@@ -397,17 +377,15 @@ impl MemoryStruct {
                 let space_ptr = Rc::as_ptr(&space);
                 let varnodes = sleigh
                     .varnodes()
-                    .filter(|varnode| Rc::as_ptr(varnode.space()) == space_ptr);
-                let ident = MEMORY_SPACE_PREFIX
-                    .into_iter()
-                    .chain(from_sleigh(&space.name));
-                let name = upper_cammel_case(ident);
-                SpaceStruct::new(&name, Rc::clone(&space), varnodes)
+                    .filter(|varnode| Rc::as_ptr(varnode.space()) == space_ptr)
+                    .map(|varnode| varnode.as_ref());
+                let ident =
+                    format!("MemorySpace{}", from_sleigh(&space.name));
+                SpaceStruct::new(&ident, space, varnodes)
             })
             .map(|space| {
-                let sleigh = Rc::as_ptr(&space.sleigh);
-                let name = snake_case(from_sleigh(&space.sleigh.name));
-                let name = format_ident!("{}", name);
+                let sleigh: *const _ = space.sleigh;
+                let name = format_ident!("{}", from_sleigh(&space.sleigh.name));
                 (sleigh, (name, space))
             })
             .collect();
@@ -446,8 +424,8 @@ impl MemoryStruct {
         let struct_name = &self.name;
         let trait_name = &memory.name;
         let functions = self.spaces.values().map(|(space_field, space)| {
-            let space_trait =
-                memory.spaces.get(&Rc::as_ptr(&space.sleigh)).unwrap();
+            let space_ptr: *const _ = space.sleigh;
+            let space_trait = memory.spaces.get(&space_ptr).unwrap();
             let read_trait = &space_trait.read;
             let read_func = &space.read;
             let read = quote! {
@@ -477,21 +455,21 @@ impl MemoryStruct {
 }
 
 #[derive(Debug, Clone)]
-pub struct SpaceStruct {
+pub struct SpaceStruct<'a> {
     //struct name
     name: Ident,
     //function to read from arbitrary address
     read: Ident,
     //function to write to arbitrary address
     write: Option<Ident>,
-    sleigh: Rc<sleigh_rs::Space>,
+    sleigh: &'a sleigh_rs::Space,
     chunks: Vec<MemoryChunk>,
 }
 
-impl SpaceStruct {
-    fn new<I>(name: &str, sleigh: Rc<sleigh_rs::Space>, varnodes: I) -> Self
+impl<'a> SpaceStruct<'a> {
+    fn new<I>(name: &str, sleigh: &'a sleigh_rs::Space, varnodes: I) -> Self
     where
-        I: Iterator<Item = Rc<sleigh_rs::Varnode>>,
+        I: Iterator<Item = &'a sleigh_rs::Varnode>,
     {
         let name = format_ident!("{}", name);
 
@@ -585,23 +563,19 @@ impl SpaceStruct {
     }
 }
 
-const CONTEXT_STRUCT_NAME: [&str; 2] = [SLEIGH_IDENT, "context"];
 const CONTEXT_SPACE_PREFIX: [&str; 3] = [SLEIGH_IDENT, "context", "space"];
 #[derive(Debug, Clone)]
-pub struct ContextStruct {
+pub struct ContextStruct<'a> {
     //name of the global memory struct
     name: Ident,
     //spaces that this struct can read/write
-    spaces: HashMap<*const sleigh_rs::Space, (Ident, SpaceStruct)>,
+    spaces: HashMap<*const sleigh_rs::Space, (Ident, SpaceStruct<'a>)>,
     //varnodes: HashMap<*const sleigh_rs::Varnode, MemoryTraitVarnode>,
 }
 
-impl ContextStruct {
-    pub fn new(sleigh: &Sleigh) -> Self {
-        let name = format_ident!(
-            "{}",
-            &upper_cammel_case(CONTEXT_STRUCT_NAME.into_iter())
-        );
+impl<'a> ContextStruct<'a> {
+    pub fn new(sleigh: &'a Sleigh) -> Self {
+        let name = format_ident!("Context");
         //let varnodes = sleigh
         //    .varnodes()
         //    .filter(|varnode| varnode.varnode_type.is_context())
@@ -623,20 +597,20 @@ impl ContextStruct {
             })
             .map(|space| {
                 let space_ptr = Rc::as_ptr(&space);
-                let varnodes = sleigh.varnodes().filter(|varnode| {
-                    Rc::as_ptr(varnode.space()) == space_ptr
-                        && varnode.varnode_type.is_context()
-                });
-                let ident = CONTEXT_SPACE_PREFIX
-                    .into_iter()
-                    .chain(from_sleigh(&space.name));
-                let name = upper_cammel_case(ident);
-                SpaceStruct::new(&name, Rc::clone(&space), varnodes)
+                let varnodes = sleigh
+                    .varnodes()
+                    .filter(|varnode| {
+                        Rc::as_ptr(varnode.space()) == space_ptr
+                            && varnode.varnode_type.is_context()
+                    })
+                    .map(|varnode| varnode.as_ref());
+                let ident =
+                    format!("ContextSpace{}", from_sleigh(&space.name));
+                SpaceStruct::new(&ident, space, varnodes)
             })
             .map(|space| {
-                let sleigh = Rc::as_ptr(&space.sleigh);
-                let name = snake_case(from_sleigh(&space.sleigh.name));
-                let name = format_ident!("{}", name);
+                let sleigh: *const _ = space.sleigh;
+                let name = format_ident!("{}", from_sleigh(&space.sleigh.name));
                 (sleigh, (name, space))
             })
             .collect();
@@ -744,9 +718,9 @@ impl MemoryChunk {
     }
 }
 
-fn chunks_from_varnodes<I>(varnodes: I) -> Vec<MemoryChunk>
+fn chunks_from_varnodes<'a, I>(varnodes: I) -> Vec<MemoryChunk>
 where
-    I: Iterator<Item = Rc<sleigh_rs::Varnode>>,
+    I: Iterator<Item = &'a sleigh_rs::Varnode>,
 {
     #[derive(Debug, PartialEq, Eq, Clone)]
     struct Chunk {

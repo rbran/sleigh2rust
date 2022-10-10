@@ -166,7 +166,7 @@ const ARCH_FILES: &[&str] = &[
 fn parse(file: &str) -> Result<(), Box<dyn std::error::Error>> {
     let sleigh = sleigh_rs::file_to_sleigh(file)?;
 
-    let out_file = format!("{}.rs", snake_case(from_sleigh(file)));
+    let out_file = format!("{}.rs", from_sleigh(file).to_lowercase());
     let out_file = Path::new("/home/rbran/src/sleigh3rust/src")
         .join(Path::new(&out_file).file_name().unwrap());
     let mut file = BufWriter::new(File::create(&out_file)?);

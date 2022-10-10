@@ -64,6 +64,14 @@ impl WorkType {
     pub fn unsigned_from_bits(bits: usize) -> Self {
         Self::from_bits(bits, false)
     }
+    pub fn from_ass(ass: &sleigh_rs::Assembly) -> Self {
+        let field = ass.field().unwrap();
+        Self::unsigned_from_bits(
+            (field.bit_range.end - field.bit_range.start)
+                .try_into()
+                .unwrap(),
+        )
+    }
     pub fn from_varnode(varnode: &sleigh_rs::Varnode) -> Self {
         match &varnode.varnode_type {
             VarnodeType::Memory(memory) => {

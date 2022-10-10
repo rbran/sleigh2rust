@@ -1,41 +1,35 @@
-use std::collections::HashMap;
+use std::cell::RefCell;
 use std::rc::Rc;
-use std::{cell::RefCell, rc::Weak};
+use std::rc::Weak;
 
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 
-use super::{
-    Constructor, ConstructorDisplay, Disassembler, DisassemblerConstructor,
-};
-use crate::builder::formater::{from_sleigh, snake_case, upper_cammel_case};
+use super::{Constructor, Disassembler};
+use crate::builder::formater::*;
 
-const TABLE_PARSE_NAME: &str = "parse";
 #[derive(Debug, Clone)]
-pub struct Table {
-    ///enum declaration ident
+pub struct Table<'a> {
+    //enum declaration ident
     name: Ident,
-    ///parse function ident
+    //parse function ident
     parse: Ident,
-    ///disassembly (pos) function ident
+    //disassembly (pos) function ident
     disassembly: Option<Ident>,
-    ///display_extend function ident
+    //display_extend function ident
     display_extend: Ident,
-    ///constructors are mapped from the sleigh_rs constructors by index
-    constructors: RefCell<Vec<Constructor>>,
+    //constructors are mapped from the sleigh_rs constructors by index
+    constructors: RefCell<Vec<Constructor<'a>>>,
     me: Weak<Self>,
-    sleigh: Rc<sleigh_rs::Table>,
+    sleigh: &'a sleigh_rs::Table,
 }
-impl Table {
-    pub fn new_empty(sleigh: Rc<sleigh_rs::Table>) -> Rc<Self> {
+impl<'a> Table<'a> {
+    pub fn new_empty(sleigh: &'a sleigh_rs::Table) -> Rc<Self> {
         Rc::new_cyclic(|me| {
-            let name = format_ident!(
-                "{}",
-                upper_cammel_case(from_sleigh(sleigh.name.as_ref()))
-            );
-            let parse =
-                format_ident!("{}", snake_case([TABLE_PARSE_NAME].into_iter()));
+            let name = format_ident!("{}", from_sleigh(sleigh.name.as_ref()));
+            let parse = format_ident!("parse");
             let constructors = RefCell::default();
+            //only non root tables have a disassembly function
             let disassembly =
                 (!sleigh.is_root()).then(|| format_ident!("disassembly"));
             let display_extend = format_ident!("display_extend");
@@ -54,13 +48,13 @@ impl Table {
         //I'm, therefore, I'm valid
         self.me.upgrade().unwrap()
     }
-    pub fn add_constructors(&self, disassembly: &Disassembler) {
+    pub fn add_constructors(&self) {
         let constructors = self
             .sleigh
             .constructors
             .iter()
             .enumerate()
-            .map(|(i, cons)| Constructor::new(&cons, self.me(), i, disassembly))
+            .map(|(i, cons)| Constructor::new(&cons, self, i))
             .collect();
         *self.constructors.borrow_mut() = constructors;
     }
@@ -87,10 +81,10 @@ impl Table {
             x.get(index).unwrap()
         })
     }
-    pub fn constructors<'a>(&'a self) -> std::cell::Ref<'_, [Constructor]> {
+    pub fn constructors(&self) -> std::cell::Ref<'_, [Constructor<'a>]> {
         std::cell::Ref::map(self.constructors.borrow(), Vec::as_slice)
     }
-    pub fn sleigh(&self) -> &Rc<sleigh_rs::Table> {
+    pub fn sleigh(&self) -> &'a sleigh_rs::Table {
         &self.sleigh
     }
     pub fn gen_parse_call<A, B, C, D>(
@@ -117,171 +111,130 @@ impl Table {
             )
         }
     }
-    pub fn gen_enum(&self) -> TokenStream {
-        let name = &self.name;
-        let variants = self.gen_variants();
-        let doc = format!("Table {}", &self.sleigh.name);
+}
+impl<'a> Disassembler<'a> {
+    pub fn gen_struct_and_variants(&self, table: &Table<'a>) -> TokenStream {
+        let name = &table.name;
+        let constructors = table.constructors();
+        let structs = constructors
+            .iter()
+            .map(|cons| self.gen_constructor_variant(cons));
+        let variants = constructors.iter().map(|cons| {
+            let variant_name = cons.variant_name();
+            let struct_name = cons.struct_name();
+            quote! {
+                #variant_name(#struct_name)
+            }
+        });
+        let doc = format!("Table {}", &table.sleigh().name);
         quote! {
+            #(#structs)*
             #[doc = #doc]
-            #[derive(Clone, Copy, Debug)]
+            #[derive(Clone, Debug)]
             pub enum #name {
-                #variants
+                #(#variants),*
             }
         }
     }
-    pub fn gen_variants(&self) -> TokenStream {
-        let constructors = self.constructors();
-        constructors
-            .iter()
-            .enumerate()
-            .map(|(i, cons)| {
-                let sleigh = self.sleigh.constructors.get(i).unwrap();
-                let name = cons.name();
-                let doc = format!("Constructor at {}", &sleigh.src);
-                let fields = cons.gen_declare_fields();
-                quote! {
-                    #[doc = #doc]
-                    #name {#(#fields),*}
-                }
-            })
-            .reduce(|acc, x| quote! {#acc, #x})
-            .unwrap_or_default()
-    }
-    pub fn gen_parse(&self, disassembler: &Disassembler) -> TokenStream {
-        let name = &self.name;
-        let parse = &self.parse;
-        let constructors = self.constructors();
-        let global_set_enum = disassembler.global_set.trait_name();
-        let parsers = constructors.iter().map(|cons| {
-            cons.gen_parse(
-                &disassembler.token,
-                &disassembler.global_set,
-                &disassembler.context_trait,
-                &disassembler.tables,
-                &disassembler.inst_work_type,
-            )
-        });
-        let context_trait_name = disassembler.context_trait.name();
-        let inst_work_type = &disassembler.inst_work_type;
-        let disassembly = self.disassembly_name().map(|name| {
-            let context_param = format_ident!("context_param");
-            let global_set_param = format_ident!("global_set");
-            let inst_start = format_ident!("inst_start");
-            let inst_next = Some(format_ident!("inst_next"));
-            //pattern for the match statements of constructor
-            let pattern = constructors.iter().map(|cons| {
-                let name = cons.name();
-                let pattern = cons.gen_match_fields();
-                quote! {
-                    Self::#name { #(#pattern),* }
-                }
-            });
-            //disassembly code
-            let disassembly = constructors.iter().map(|cons| {
-                DisassemblerConstructor::disassembly(
-                    &disassembler.context_trait,
-                    &disassembler.global_set,
-                    &inst_start,
-                    &inst_next,
-                    inst_work_type,
-                    &global_set_param,
-                    &context_param,
-                    true,
-                    &cons.ass_fields,
-                    true,
-                    &cons.calc_fields,
-                    &mut HashMap::new(),
-                    &cons.sleigh().disassembly,
-                )
-            });
-            //call disassembly for all the sub tables
-            let sub_disassembly = constructors.iter().map(|cons| {
-                cons.table_fields()
-                    .map(|(name, _table)| {
-                        quote! {
-                            #name.disassembly(
-                                #context_param,
-                                #inst_start,
-                                #inst_next,
-                                #global_set_param,
-                            );
-                        }
-                    })
-                    .collect::<TokenStream>()
-            });
-            quote! {
-                fn #name<'a, T>(
-                    &mut self,
-                    #context_param: &mut T,
-                    #inst_start: #inst_work_type,
-                    #inst_next: #inst_work_type,
-                    #global_set_param: &mut impl #global_set_enum,
-                ) where T: #context_trait_name + Clone
-                {
-                    match self {
-                        #(#pattern => {
-                            #disassembly
-                            #sub_disassembly
-                        })*
-                    }
+    pub fn gen_display_extend(&self, table: &Table<'a>) -> TokenStream {
+        let name = table.display_extend_name();
+        let display_struct = self.display.name();
+        let context_trait = self.context_trait.name();
+        let constructors = table.constructors();
+        let variants = constructors.iter().map(Constructor::variant_name);
+        let displays = constructors.iter().map(Constructor::display);
+        quote! {
+            pub fn #name<T>(
+                &self,
+                display: &mut Vec<#display_struct>,
+                context: &T,
+            ) where T: #context_trait + Clone {
+                match self {
+                    #(Self::#variants(x) => x.#displays(display, context)),*
                 }
             }
-        });
-        let display_param = format_ident!("display");
-        let context_param = format_ident!("context");
-        let display_enum = &disassembler.display.name();
-        let display_extend = self.display_extend_name();
-        let displays = constructors.iter().enumerate().map(|(i, cons)| {
-            let constructor = self.sleigh.constructors.get(i).unwrap();
-            let parser = ConstructorDisplay::new(
-                //disassembler,
-                &display_param,
-                &disassembler.display,
-                &context_param,
-                &disassembler.context_trait,
-                &disassembler.registers,
-                &disassembler.meanings,
-                //&self,
-                cons,
-                constructor,
-            );
-            parser.gen_display_match()
-        });
-        //parse function for each variant
-        let constructors = self.constructors();
-        let parser_functions = constructors.iter().map(|cons| cons.parse());
-        quote! {
-            impl #name {
-                pub fn #display_extend<T>(
-                    &self,
-                    #display_param: &mut Vec<#display_enum>,
-                    #context_param: &T,
-                ) where T: #context_trait_name + Clone {
-                    match self {
-                        #(#displays)*
-                    }
-                }
-                #disassembly
-                #(#parsers)*
-                pub fn #parse<'a, T>(
-                    tokens_param: &'a [u8],
-                    context_param: &mut T,
-                    inst_start: #inst_work_type,
-                    global_set_param: &mut impl #global_set_enum,
-                ) -> Option<(&'a [u8], Self)>
-                    where T: #context_trait_name + Clone
-                {
-                    //try to parse each of the constructors, return if success
-                    #(if let parsed @ Some(_) = Self::#parser_functions(
-                        tokens_param,
+        }
+    }
+    //disassembly don't exist for root table
+    pub fn gen_disassembly(&self, table: &Table<'a>) -> Option<TokenStream> {
+        //if root table, return None
+        let disassembly_name = table.disassembly_name()?;
+        //call disassembly for each variant
+        let constructors = table.constructors();
+        let variants = constructors.iter().map(Constructor::variant_name);
+        let inst_work_type = &self.inst_work_type;
+        let global_set_enum = self.global_set.trait_name();
+        let context_trait_name = self.context_trait.name();
+        Some(quote! {
+            fn #disassembly_name<'a, T>(
+                &mut self,
+                context_param: &mut T,
+                inst_start: #inst_work_type,
+                inst_next: #inst_work_type,
+                global_set_param: &mut impl #global_set_enum,
+            ) where T: #context_trait_name + Clone
+            {
+                match self {
+                    #(Self::#variants(x) => x.disassembly(
                         context_param,
                         inst_start,
+                        inst_next,
                         global_set_param,
-                    ) {
-                        return parsed;
-                    })*
-                    None
+                    )),*
                 }
+            }
+        })
+    }
+    pub fn gen_parse(&self, table: &Table<'a>) -> TokenStream {
+        let parse = &table.parse;
+        let inst_work_type = &self.inst_work_type;
+        let global_set_enum = self.global_set.trait_name();
+        let context_trait_name = self.context_trait.name();
+        let constructors = table.constructors();
+        let variant_names = constructors.iter().map(Constructor::struct_name);
+        let variant_enum_names =
+            constructors.iter().map(Constructor::variant_name);
+        let variant_parsers = constructors.iter().map(Constructor::parse);
+        quote! {
+            pub fn #parse<'a, T>(
+                tokens_param: &'a [u8],
+                context_param: &mut T,
+                inst_start: #inst_work_type,
+                global_set_param: &mut impl #global_set_enum,
+            ) -> Option<(#inst_work_type, Self)>
+                where T: #context_trait_name + Clone
+            {
+                //clone context, so we updated it only if we found the correct
+                //match variant
+                let mut context_current = context_param.clone();
+                //try to parse each of the constructors, return if success
+                #(if let Some((inst_next, parsed)) = #variant_names::#variant_parsers(
+                    tokens_param,
+                    &mut context_current,
+                    inst_start,
+                    global_set_param,
+                ) {
+                    *context_param = context_current;
+                    return Some((inst_next, Self::#variant_enum_names(parsed)));
+                })*
+                None
+            }
+        }
+    }
+    pub fn gen_table_and_bitches(&self, table: &Table<'a>) -> TokenStream {
+        let name = &table.name;
+        //struct and parse/disassembly/display functions for all variants
+        let table_struct_and_variants = self.gen_struct_and_variants(table);
+        //table main parse-disassembly/display_functions
+        let disassembly = self.gen_disassembly(table);
+        let display_extend = self.gen_display_extend(table);
+        let parse = self.gen_parse(table);
+        quote! {
+            #table_struct_and_variants
+            impl #name {
+                #display_extend
+                #disassembly
+                #parse
             }
         }
     }

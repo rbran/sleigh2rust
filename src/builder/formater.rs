@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 #[derive(Clone, Copy)]
 struct SeparateTokens<'a>(&'a str);
 
@@ -37,58 +39,60 @@ struct SeparateTokens<'a>(&'a str);
 //    }
 //}
 
-pub fn from_sleigh<'a>(input: &'a str) -> impl Iterator<Item = &str> + Clone {
+pub fn from_sleigh<'a>(input: &'a str) -> Cow<'a, str> {
     input
-        .split(['.', '_'])
-        //separate Snake case into multiple tokens:
-        //eg: ArmPCRelImmed12 => [arm, pc, rel, immed12]
-        //.map(SeparateTokens)
-        //.flatten()
+        .find('.')
+        .map(|_| Cow::Owned(input.replace('.', "_")))
+        .unwrap_or(Cow::Borrowed(input))
+    //separate Snake case into multiple tokens:
+    //eg: ArmPCRelImmed12 => [arm, pc, rel, immed12]
+    //.map(SeparateTokens)
+    //.flatten()
 }
 
-pub fn upper_cammel_case<'a, I>(input: I) -> String
-where
-    I: Iterator<Item = &'a str>,
-{
-    input
-        .map(|ident| {
-            let mut iter = ident.chars().map(|ch| ch.to_ascii_lowercase());
-            let first = iter.next();
-            first
-                .map(|first| first.to_ascii_uppercase())
-                .into_iter()
-                .chain(iter)
-        })
-        .flatten()
-        .collect()
-}
-
-pub fn snake_case<'a, I>(input: I) -> String
-where
-    I: Iterator<Item = &'a str>,
-{
-    input
-        .enumerate()
-        .map(|(index, ident)| {
-            if index == 0 { "" } else { "_" }
-                .chars()
-                .chain(ident.chars().map(|ch| ch.to_ascii_lowercase()))
-        })
-        .flatten()
-        .collect()
-}
-
-pub fn screaming_snake_case<'a, I>(input: I) -> String
-where
-    I: Iterator<Item = &'a str>,
-{
-    input
-        .enumerate()
-        .map(|(index, ident)| {
-            if index == 0 { "" } else { "_" }
-                .chars()
-                .chain(ident.chars().map(|x| x.to_ascii_uppercase()))
-        })
-        .flatten()
-        .collect()
-}
+//pub fn upper_cammel_case<'a, I>(input: I) -> String
+//where
+//    I: Iterator<Item = &'a str>,
+//{
+//    input
+//        .map(|ident| {
+//            let mut iter = ident.chars().map(|ch| ch.to_ascii_lowercase());
+//            let first = iter.next();
+//            first
+//                .map(|first| first.to_ascii_uppercase())
+//                .into_iter()
+//                .chain(iter)
+//        })
+//        .flatten()
+//        .collect()
+//}
+//
+//pub fn snake_case<'a, I>(input: I) -> String
+//where
+//    I: Iterator<Item = &'a str>,
+//{
+//    input
+//        .enumerate()
+//        .map(|(index, ident)| {
+//            if index == 0 { "" } else { "_" }
+//                .chars()
+//                .chain(ident.chars().map(|ch| ch.to_ascii_lowercase()))
+//        })
+//        .flatten()
+//        .collect()
+//}
+//
+//pub fn screaming_snake_case<'a, I>(input: I) -> String
+//where
+//    I: Iterator<Item = &'a str>,
+//{
+//    input
+//        .enumerate()
+//        .map(|(index, ident)| {
+//            if index == 0 { "" } else { "_" }
+//                .chars()
+//                .chain(ident.chars().map(|x| x.to_ascii_uppercase()))
+//        })
+//        .flatten()
+//        .collect()
+//}
