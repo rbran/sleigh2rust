@@ -18,7 +18,7 @@ pub struct TokenField<'a> {
 
 impl<'a> TokenField<'a> {
     pub fn new(ass: &'a sleigh_rs::Assembly) -> Rc<Self> {
-        let _field = ass.field().unwrap();
+        assert!(ass.field().is_some());
         let name = format_ident!("{}", from_sleigh(&ass.name));
         let sleigh = ass;
         Rc::new(Self {
@@ -46,16 +46,8 @@ impl<'a> TokenField<'a> {
 pub fn gen_token_parsers<'a>(
     sleigh: &'a sleigh_rs::Sleigh,
 ) -> impl Iterator<Item = TokenParser> + 'a {
-    let token_lens: HashSet<NonZeroTypeU> = sleigh
-        .tokens()
-        .map(|token| {
-            //assuming all tokens are full byte len
-            let token_size = token.size.get();
-            assert!(token_size % 8 == 0);
-            assert!(token_size / 8 != 0);
-            NonZeroTypeU::new(token_size).unwrap()
-        })
-        .collect();
+    let token_lens: HashSet<NonZeroTypeU> =
+        sleigh.tokens().map(|token| token.size).collect();
     token_lens
         .into_iter()
         .map(move |len| TokenParser::new(sleigh, len))
@@ -66,26 +58,30 @@ pub struct TokenParser<'a> {
     name: Ident,
     //new function
     new_func: Ident,
-    //internal value len in bits
-    token_size: NonZeroTypeU,
+    //internal value len in bytes
+    token_bytes: NonZeroTypeU,
     //assembly fields that this parser can produce
     fields: HashMap<*const sleigh_rs::Assembly, Rc<TokenField<'a>>>,
 }
 impl<'a> TokenParser<'a> {
     pub fn new(
         sleigh: &'a sleigh_rs::Sleigh,
-        token_size: NonZeroTypeU,
+        token_bits: NonZeroTypeU,
     ) -> Self {
+        //Tokens need to be multiple of 8, if not, this is an sleigh_rs
+        //logic/parsing error
+        assert!(token_bits.get() % 8 == 0);
+        assert!(token_bits.get() / 8 != 0);
+        //list of fields that this token is able to produce
         let fields = sleigh
             .token_fields()
             .filter(|ass| {
                 //only if this field is smaller then the token that we read
-                let field = if let Some(field) = ass.field() {
-                    field
+                if let Some(field) = ass.field() {
+                    field.token.size <= token_bits
                 } else {
-                    return false;
-                };
-                field.token.size <= token_size
+                    false
+                }
             })
             .map(|ass| {
                 let ptr = Rc::as_ptr(&ass);
@@ -93,16 +89,17 @@ impl<'a> TokenParser<'a> {
                 (ptr, token)
             })
             .collect();
-        let name = format_ident!("TokenParser{}", token_size.get());
+        let name = format_ident!("TokenParser{}", token_bits.get());
+        let token_bytes = NonZeroTypeU::new(token_bits.get() / 8).unwrap();
         Self {
             name,
             fields,
+            token_bytes,
             new_func: format_ident!("new"),
-            token_size,
         }
     }
     pub fn token_len(&self) -> NonZeroTypeU {
-        self.token_size
+        self.token_bytes
     }
     pub fn name(&self) -> &Ident {
         &self.name
@@ -132,16 +129,50 @@ impl<'a> TokenParser<'a> {
         let len = field.bit_range.end - field.bit_range.start;
         let bit_start = field.bit_range.start;
         let bit_mask = (1u128 << len) - 1;
-        let work_type = WorkType::unsigned_from_bits(
-            self.token_size.get().try_into().unwrap(),
+        let work_type = WorkType::unsigned_from_bytes(
+            self.token_bytes.get().try_into().unwrap(),
         );
-        let return_type = WorkType::unsigned_from_bits(len.try_into().unwrap());
+        let work_len = work_type.len_bytes();
+        let read_bytes_start =
+            work_len - usize::try_from(self.token_bytes.get()).unwrap();
+        let return_type =
+            WorkType::from_bits(len.try_into().unwrap(), field.signed);
+        let from_xx_bytes = match &field.token.endian {
+            sleigh_rs::semantic::Endian::Little => quote! {from_le_bytes},
+            sleigh_rs::semantic::Endian::Big => quote! {from_be_bytes},
+        };
+        let value_endian = if read_bytes_start == 0 {
+            quote! {
+                #work_type::#from_xx_bytes(self.0)
+            }
+        } else {
+            quote! { {
+                let mut inner_raw = [0u8; #work_len];
+                inner_raw[#read_bytes_start..].copy_from_slice(self.0);
+                #work_type::#from_xx_bytes(inner_raw)
+            } }
+        };
+        let value = format_ident!("raw_value");
+        let solve_signed = if field.signed {
+            let unsigned_mask = bit_mask >> 1;
+            let sign_mask = unsigned_mask + 1;
+            quote! {
+                let unsigned = #value & #unsigned_mask as #work_type;
+                if (#value & #sign_mask as #work_type) == 0 {
+                    unsigned as #return_type
+                } else {
+                    -(unsigned as #return_type)
+                }
+            }
+        } else {
+            quote! { #value as #return_type }
+        };
         quote! {
             pub fn #name(&self) -> #return_type {
-                let mut tmp = self.0;
-                tmp >>= #bit_start as #work_type;
-                tmp &= #bit_mask as #work_type;
-                tmp as #return_type
+                let mut #value = #value_endian;
+                #value >>= #bit_start as #work_type;
+                #value &= #bit_mask as #work_type;
+                #solve_signed
             }
         }
     }
@@ -149,29 +180,15 @@ impl<'a> TokenParser<'a> {
         let name = &self.name;
         //NOTE internal value and read len are diferent, eg: token is 3 bytes
         //internal value could be a u32 (4bytes), but always value >= token
-        let token_bytes = usize::try_from(self.token_size.get() / 8).unwrap();
-        let value_type = WorkType::unsigned_from_bits(
-            self.token_size.get().try_into().unwrap(),
-        );
-        let value_len = value_type.len_bytes();
-        let read_bytes_start =
-            value_len - usize::try_from(token_bytes).unwrap();
+        let token_bytes = usize::try_from(self.token_bytes.get()).unwrap();
         let creator = self.creator();
         let fields = self.fields.values().map(|x| self.gen_function(x));
+        //let from_bytes_function = if self.
         quote! {
-            pub struct #name(#value_type);
+            pub struct #name([u8; #token_bytes]);
             impl #name {
-                //creator
                 pub fn #creator(data: &[u8]) -> Option<Self> {
-                    const TOKEN_LEN: usize = #token_bytes;
-                    if data.len() < TOKEN_LEN {
-                        return None
-                    }
-                    let (data, _rest) = data.split_at(TOKEN_LEN);
-                    let mut inner_raw = [0u8; #value_len];
-                    inner_raw[#read_bytes_start..].copy_from_slice(data);
-                    let inner = #value_type::from_be_bytes(inner_raw);
-                    Some(Self(inner))
+                    <[u8; #token_bytes]>::try_from(data).ok().map(Self)
                 }
                 #(#fields)*
             }

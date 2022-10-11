@@ -268,7 +268,7 @@ fn token_len_from_fields_and<'a>(
             FieldAnd::SubPattern { src: _, sub: _ } => None,
         })
         .max()
-        .map(|len| NonZeroTypeU::new(len))
+        .map(|len| NonZeroTypeU::new(len / 8))
         .flatten()
 }
 
@@ -358,9 +358,9 @@ impl<'a, 'b> BlockParser<'a, 'b> {
             produced_fields: HashMap::new(),
         }
     }
-    fn build_token_parser(&mut self, len_bits: NonZeroTypeU) -> TokenStream {
+    fn build_token_parser(&mut self, len_bytes: NonZeroTypeU) -> TokenStream {
         let token_parser =
-            self.disassembler.token_parsers.get(&len_bits).unwrap();
+            self.disassembler.token_parsers.get(&len_bytes).unwrap();
         let creator = token_parser.creator();
         let block_len = &self.block_len;
         let inst_work_type = self.inst_work_type;
@@ -368,9 +368,7 @@ impl<'a, 'b> BlockParser<'a, 'b> {
         let token_struct = token_parser.name();
         let token_var = &self.token_parser_instance;
         let token_param = &self.token_param;
-        assert!(len_bits.get() % 8 == 0);
-        assert!(len_bits.get() / 8 != 0);
-        let len_bytes = len_bits.get() / 8;
+        let len_bytes = len_bytes.get();
         self.token_parser = Some(token_parser);
         quote! {
             let #token_var =
@@ -489,7 +487,7 @@ impl<'a, 'b> BlockParser<'a, 'b> {
                 constraint,
                 ..
             } => {
-                let block_len = assembly.token_len();
+                let block_len = assembly.token_len() / 8;
                 let inst_work_type = self.inst_work_type;
                 let token_parser = NonZeroTypeU::new(block_len)
                     .map(|len| self.build_token_parser(len));

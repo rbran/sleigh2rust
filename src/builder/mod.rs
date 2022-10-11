@@ -44,33 +44,36 @@ pub enum WorkType {
 }
 
 impl WorkType {
-    pub fn from_bits(bits: usize, signed: bool) -> Self {
-        match bits {
+    pub fn from_bytes(bytes: usize, signed: bool) -> Self {
+        match bytes {
             0 => unreachable!(),
-            1..=8 if signed => Self::I8,
-            1..=8 /*if !signed*/ => Self::U8,
-            9..=16 if signed => Self::I16,
-            9..=16 /*if !signed*/ => Self::U16,
-            17..=32 if signed => Self::I32,
-            17..=32 /*if !signed*/ => Self::U32,
-            33..=64 if signed => Self::I64,
-            33..=64 /*if !signed*/ => Self::U64,
-            65..=128 if signed => Self::I128,
-            65..=128 /*if !signed*/ => Self::U128,
+            1 if signed => Self::I8,
+            1 /*if !signed*/ => Self::U8,
+            2 if signed => Self::I16,
+            2 /*if !signed*/ => Self::U16,
+            3..=4 if signed => Self::I32,
+            3..=4 /*if !signed*/ => Self::U32,
+            5..=8 if signed => Self::I64,
+            5..=8 /*if !signed*/ => Self::U64,
+            9..=16 if signed => Self::I128,
+            9..=16 /*if !signed*/ => Self::U128,
             //x => Self::Array(x),
             _x => todo!(),
         }
+    }
+    pub fn from_bits(bits: usize, signed: bool) -> Self {
+        Self::from_bytes((bits + 7) / 8, signed)
+    }
+    pub fn unsigned_from_bytes(bytes: usize) -> Self {
+        Self::from_bytes(bytes, false)
     }
     pub fn unsigned_from_bits(bits: usize) -> Self {
         Self::from_bits(bits, false)
     }
     pub fn from_ass(ass: &sleigh_rs::Assembly) -> Self {
         let field = ass.field().unwrap();
-        Self::unsigned_from_bits(
-            (field.bit_range.end - field.bit_range.start)
-                .try_into()
-                .unwrap(),
-        )
+        let bits = field.bit_range.end - field.bit_range.start;
+        Self::from_bits(bits.try_into().unwrap(), field.signed)
     }
     pub fn from_varnode(varnode: &sleigh_rs::Varnode) -> Self {
         match &varnode.varnode_type {
