@@ -657,7 +657,7 @@ impl<'a, 'b> BlockParser<'a, 'b> {
                         Some(quote! {
                             let mut #sub_pattern_name = #sub_func;
                             let (
-                                (#(#tables),*),
+                                (#(mut #tables),*),
                                 (#(#fields),*),
                                 sub_len
                              ) = #sub_pattern_name(#tokens, &mut #context_current)?;
@@ -745,6 +745,7 @@ impl<'a, 'b> BlockParser<'a, 'b> {
     ) -> TokenStream {
         let context_current = format_ident!("context_current");
 
+        let inst_len = format_ident!("inst_len");
         let block_len = format_ident!("block_len");
         let token_current = format_ident!("token_current");
 
@@ -798,11 +799,12 @@ impl<'a, 'b> BlockParser<'a, 'b> {
             blocks_parsing.extend(quote! {
                 let mut #sub_pattern_name = #parse;
                 let (
-                    (#(#table_var_print),*),
+                    (#(mut #table_var_print),*),
                     (#(#field_var_print),*),
                     block_len
                 ) = #sub_pattern_name(#token_current, &mut #context_current)?;
                 #token_current = &#token_current[usize::try_from(block_len).unwrap()..];
+                #inst_len += block_len;
             });
             table_vars.extend(tables.drain(..));
             ass_vars.extend(fields.drain(..));
@@ -819,6 +821,7 @@ impl<'a, 'b> BlockParser<'a, 'b> {
         quote! {
             |token, context: &mut T| {
                 //each block will increment this value by its size
+                let mut #inst_len = 0 as #inst_work_type;
                 let mut #block_len = 0 as #inst_work_type;
                 let mut #context_current = context.clone();
                 //the current_token will be increseased by each block, so the next
@@ -827,7 +830,7 @@ impl<'a, 'b> BlockParser<'a, 'b> {
                 #blocks_parsing
                 *context = #context_current;
                 Some((
-                    (#(#tables),*),
+                    (#(mut #tables),*),
                     (#(#fields),*),
                     #block_len
                 ))
@@ -1084,23 +1087,26 @@ impl<'a> Disassembler<'a> {
                     true,
                     true,
                     &constructor,
-                    &mut HashMap::new(),
+                    &constructor.calc_fields,
                     ass_vars,
                     &constructor.sleigh().disassembly,
                 );
                 //call disassembly for all the sub tables
                 let sub_disassembly = constructor
                     .table_fields()
-                    .map(|table| {
-                        let name = table.name();
-                        quote! {
-                            #name.disassembly(
+                    .filter_map(|field| {
+                        let name = field.name();
+                        let table_ptr = Rc::as_ptr(field.table());
+                        let table = self.tables.get(&table_ptr).unwrap();
+                        let disassembly = table.disassembly_name()?;
+                        Some(quote! {
+                            #name.#disassembly(
                                 #context_param,
                                 #inst_start,
                                 #inst_next,
                                 #global_set_param,
                             );
-                        }
+                        })
                     })
                     .collect::<TokenStream>();
                 quote! {
@@ -1196,11 +1202,12 @@ impl<'a> Disassembler<'a> {
             blocks_parsing.extend(quote! {
                 let mut #parse_block_name = #parse;
                 let (
-                    (#(#table_var_print),*),
+                    (#(mut #table_var_print),*),
                     (#(#field_var_print),*),
                     block_len
                 ) = #parse_block_name(#token_current, &mut #context_current)?;
                 #token_current = &#token_current[usize::try_from(block_len).unwrap()..];
+                #inst_len += block_len;
             });
             table_vars.extend(tables.drain(..));
             ass_vars.extend(fields.drain(..));
@@ -1231,26 +1238,46 @@ impl<'a> Disassembler<'a> {
         };
 
         //if root, any pos disassembly should also be executed localy
-        let disassembly_pos = if constructor.is_root() && sleigh.disassembly.pos
-        {
-            let context_helper = format_ident!("context_tmp");
-            let dis = DisassemblyConstructor::disassembly(
-                &self.context_trait,
-                &self.global_set,
-                &inst_start,
-                &inst_next,
-                &inst_work_type,
-                &global_set_param,
-                &context_helper,
-                false,
-                false,
-                constructor,
-                &mut calc_vars_local,
-                &ass_vars,
-                &sleigh.disassembly,
-            );
+        let disassembly_pos = if constructor.is_root() {
+            let dis = sleigh.disassembly.pos.then(|| {
+                let context_helper = format_ident!("context_tmp");
+                let dis = DisassemblyConstructor::disassembly(
+                    &self.context_trait,
+                    &self.global_set,
+                    &inst_start,
+                    &inst_next,
+                    &inst_work_type,
+                    &global_set_param,
+                    &context_helper,
+                    false,
+                    false,
+                    constructor,
+                    &mut calc_vars_local,
+                    &ass_vars,
+                    &sleigh.disassembly,
+                );
+                quote! {
+                    let #context_helper = &mut #context_current;
+                    #dis
+                }
+            });
+            let disassembly_inner =
+                constructor.table_fields().filter_map(|field| {
+                    let name = field.name();
+                    let table_ptr = Rc::as_ptr(field.table());
+                    let table = self.tables.get(&table_ptr).unwrap();
+                    let disassembly = table.disassembly_name()?;
+                    Some(quote! {
+                        #name.#disassembly(
+                            &mut #context_current,
+                            #inst_start,
+                            #inst_next,
+                            #global_set_param,
+                        );
+                    })
+                });
             quote! {
-                let #context_helper = &mut #context_current;
+                #(#disassembly_inner)*
                 #dis
             }
         } else {
@@ -1275,6 +1302,11 @@ impl<'a> Disassembler<'a> {
                 }
             });
         let fields = constructor.gen_match_fields();
+        let inst_next = constructor.is_root().then(|| {
+            quote! {
+                let #inst_next = #inst_start + #inst_len;
+            }
+        });
         let code = quote! {
             pub fn #parse_name<'a, T>(
                 #token_param: &'a [u8],
@@ -1295,10 +1327,10 @@ impl<'a> Disassembler<'a> {
                 let mut #token_current = #token_param;
                 #blocks_parsing
                 #disassembly_pre
-                let #inst_next = #inst_start + #inst_len;
+                #inst_next
                 //only on instruction table, otherwise this is on a function
-                #disassembly_pos
                 #(#defaults)*
+                #disassembly_pos
                 *context = #context_current;
                 Some((
                     #inst_len,

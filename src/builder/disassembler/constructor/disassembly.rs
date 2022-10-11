@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use proc_macro2::{Ident, TokenStream};
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, ToTokens};
 use sleigh_rs::semantic::disassembly::{GlobalSet, Variable};
 use sleigh_rs::{Assembly, IntTypeS, Varnode};
 
@@ -32,7 +32,7 @@ pub struct DisassemblyConstructor<'a, 'b> {
     constructor: &'b Constructor<'a>,
 
     //variables created during the execution of this disassembly
-    calc_fields: &'b mut HashMap<*const Variable, (Ident, &'a Variable)>,
+    calc_fields: &'b HashMap<*const Variable, ParsedField<&'a Variable>>,
     ass_vars: &'b HashMap<*const Assembly, Ident>,
     existing_var: HashMap<*const Variable, ParsedField<&'a Variable>>,
     context_vars: HashMap<*const Varnode, (Ident, WorkType, &'a Varnode)>,
@@ -53,7 +53,7 @@ impl<'a, 'b> DisassemblyConstructor<'a, 'b> {
         deref_var: bool,
         constructor: &'b Constructor<'a>,
 
-        calc_fields: &'b mut HashMap<*const Variable, (Ident, &'a Variable)>,
+        calc_fields: &'b HashMap<*const Variable, ParsedField<&'a Variable>>,
         ass_vars: &'b HashMap<*const Assembly, Ident>,
         disassembly: &'a sleigh_rs::Disassembly,
     ) -> TokenStream {
@@ -140,8 +140,7 @@ impl<'a, 'b> DisassemblyConstructor<'a, 'b> {
         //otherwise create it
         let context = self.context_trait.varnode(ptr);
         let context_func = context.read();
-        let context_name =
-            format_ident!("{}", from_sleigh(&varnode.name));
+        let context_name = format_ident!("{}", from_sleigh(&varnode.name));
         let context_param = &self.context_param;
         let context_type = *context.return_type();
 
@@ -235,15 +234,14 @@ impl<'a, 'b> DisassemblyGenerator<'a> for DisassemblyConstructor<'a, 'b> {
         if self.calc_fields.contains_key(&ptr) {
             return;
         }
-        let var_name =
-            format_ident!("{}", from_sleigh(var.name.as_ref()));
+        let var_name = format_ident!("{}", from_sleigh(var.name.as_ref()));
         let zero: IntTypeS = 0;
         //variable used used during the disassembly, initialized it with zero
         self.build_pre_disassembly.push(quote! {
             let mut #var_name = #zero;
         });
-        self.calc_fields
-            .insert(ptr, (var_name, var))
+        self.existing_var
+            .insert(ptr, ParsedField::new(var_name, var))
             .map(|_| unreachable!("Variable duplicated"));
     }
 
@@ -251,13 +249,11 @@ impl<'a, 'b> DisassemblyGenerator<'a> for DisassemblyConstructor<'a, 'b> {
         let ptr: *const Variable = var;
         self.existing_var
             .get(&ptr)
-            .map(|field| {
-                let name = field.name();
-                let deref = self.deref_var.then(|| quote! {*});
-                quote! {#deref #name}
-            })
+            .map(|field| field.name().to_token_stream())
             .or_else(|| {
-                self.calc_fields.get(&ptr).map(|(name, _)| quote! {#name})
+                let name = self.calc_fields.get(&ptr).map(ParsedField::name)?;
+                let deref = self.deref_var.then(|| quote! {*});
+                Some(quote! {#deref #name})
             })
             .unwrap()
     }

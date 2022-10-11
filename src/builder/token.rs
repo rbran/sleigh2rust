@@ -155,13 +155,15 @@ impl<'a> TokenParser<'a> {
         let value = format_ident!("raw_value");
         let solve_signed = if field.signed {
             let unsigned_mask = bit_mask >> 1;
-            let sign_mask = unsigned_mask + 1;
+            let sign_bit = unsigned_mask + 1;
             quote! {
                 let unsigned = #value & #unsigned_mask as #work_type;
-                if (#value & #sign_mask as #work_type) == 0 {
-                    unsigned as #return_type
+                //unsigned we extend the value with zeros
+                //signed we extend the value with ones
+                if #value & #sign_bit as #work_type != 0 {
+                    (!#unsigned_mask as #work_type | unsigned) as #return_type
                 } else {
-                    -(unsigned as #return_type)
+                    unsigned as #return_type
                 }
             }
         } else {
