@@ -634,9 +634,13 @@ impl<'a, 'b> BlockParser<'a, 'b> {
                         //TODO check recursive/always for table
                         let sub_func = self.gen_sub_constraints(sub, src);
                         let tables = sub.produced().tables().iter().map(|table| {
-                            &self.produced_tables
+                            self.produced_tables
                                 .get(&Rc::as_ptr(table.table()))
-                                .unwrap().1
+                                .map(|x| {
+                                    let name = &x.1;
+                                    quote!{mut #name}
+                                })
+                                .unwrap_or(quote!{_})
                         });
                         let fields = sub.produced().fields().iter().map(|field| {
                             self.produced_fields
@@ -657,7 +661,7 @@ impl<'a, 'b> BlockParser<'a, 'b> {
                         Some(quote! {
                             let mut #sub_pattern_name = #sub_func;
                             let (
-                                (#(mut #tables),*),
+                                (#(#tables),*),
                                 (#(#fields),*),
                                 sub_len
                              ) = #sub_pattern_name(#tokens, &mut #context_current)?;
@@ -703,11 +707,14 @@ impl<'a, 'b> BlockParser<'a, 'b> {
                 let inst_work_type = self.inst_work_type;
                 let parser_fields = self.build_and_fields(left);
                 let tables = products.tables().iter().map(|table| {
-                    &self
+                    self
                         .produced_tables
                         .get(&Rc::as_ptr(table.table()))
-                        .unwrap()
-                        .1
+                        .map(|x| {
+                            let name = &x.1;
+                            quote! {#name}
+                        })
+                        .unwrap_or(quote! {_})
                 });
                 let fields = products.fields().iter().map(|field| {
                     self.produced_fields
@@ -830,7 +837,7 @@ impl<'a, 'b> BlockParser<'a, 'b> {
                 #blocks_parsing
                 *context = #context_current;
                 Some((
-                    (#(mut #tables),*),
+                    (#(#tables),*),
                     (#(#fields),*),
                     #block_len
                 ))
