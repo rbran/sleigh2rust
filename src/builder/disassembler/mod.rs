@@ -49,10 +49,8 @@ impl<'a> Disassembler<'a> {
                 (len, parser)
             })
             .collect();
-        let registers = Rc::new(RegistersEnum::from_printable(
-            format_ident!("Register"),
-            sleigh,
-        ));
+        let registers =
+            Rc::new(RegistersEnum::from_all(format_ident!("Register"), sleigh));
         let tables = sleigh
             .tables()
             .map(|table| {
@@ -150,8 +148,11 @@ impl<'a> Disassembler<'a> {
             .values()
             .map(|table| self.gen_table_and_bitches(table));
         let registers_enum = self.registers.generate();
+        let registers_enum_impl_display =
+            self.registers.generate_impl_display();
         let display_element =
             self.display.gen_display_element_enum(self.registers.name());
+        let display_element_impl_display = self.display.gen_impl_display();
         let global_set = self.global_set.generate(&self.inst_work_type);
         quote! {
             #(#meaning_solvers)*
@@ -161,7 +162,9 @@ impl<'a> Disassembler<'a> {
             #context_struct_def
             #context_struct_impl_context_trait
             #registers_enum
+            #registers_enum_impl_display
             #display_element
+            #display_element_impl_display
             #(#tables)*
         }
     }

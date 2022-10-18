@@ -58,4 +58,31 @@ impl DisplayElement {
             }
         }
     }
+    pub fn gen_impl_display(&self) -> TokenStream {
+        let name = self.name();
+        let literal = &self.literal;
+        let register = &self.register;
+        let signed = &self.signed;
+        let unsigned = &self.unsigned;
+        quote! {
+            impl core::fmt::Display for #name {
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {
+                    match self {
+                        Self::#literal(lit) => lit.fmt(f),
+                        Self::#register(reg) => reg.fmt(f),
+                        Self::#signed(hex, value) => if *hex {
+                            write!(f, "0x{:x}", value)
+                        } else {
+                            value.fmt(f)
+                        },
+                        Self::#unsigned(hex, value) => if *hex {
+                            write!(f, "0x{:x}", value)
+                        } else {
+                            value.fmt(f)
+                        },
+                    }
+                }
+            }
+        }
+    }
 }

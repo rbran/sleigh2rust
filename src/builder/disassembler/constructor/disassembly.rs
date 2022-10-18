@@ -153,6 +153,25 @@ impl<'a, 'b> DisassemblyConstructor<'a, 'b> {
         let (ident, context_type, _) = self.context_vars.get(&ptr).unwrap();
         (ident, context_type)
     }
+    //get var name on that contains the this assembly field value
+    fn table_field(
+        &mut self,
+        table: &'a sleigh_rs::Table,
+    ) -> Option<(TokenStream, WorkType)> {
+        let ptr: *const _ = table;
+        let field = self.constructor.table_fields.get(&ptr).unwrap();
+        let field_name = field.name();
+        use sleigh_rs::semantic::table::ExecutionExport;
+        let export_len = match table.export {
+            ExecutionExport::Const(len) => len.get().try_into().unwrap(),
+            ExecutionExport::None
+            | ExecutionExport::Value(_)
+            | ExecutionExport::Reference(_)
+            | ExecutionExport::Multiple(_) => return None,
+        };
+        let export_type = WorkType::from_bytes(export_len, false);
+        Some((quote! {*self.#field_name}, export_type))
+    }
 }
 
 impl<'a, 'b> DisassemblyGenerator<'a> for DisassemblyConstructor<'a, 'b> {
@@ -165,17 +184,24 @@ impl<'a, 'b> DisassemblyGenerator<'a> for DisassemblyConstructor<'a, 'b> {
             Varnode(varnode) => {
                 let (name, _var_type) = self.context_field(varnode);
                 //TODO solve IntTypeS instead of i64
-                quote! { #addr_type::try_from(#name).unwrap() }
+                quote! { Some(#addr_type::try_from(#name).unwrap()) }
             }
             Assembly(ass) => {
                 let (name, _ass_type) = self.ass_field(ass);
-                quote! { #addr_type::try_from(#name).unwrap() }
+                quote! { Some(#addr_type::try_from(#name).unwrap()) }
             }
             Local(var) => {
                 let name = self.var_name(var);
-                quote! {#addr_type::try_from(#name).unwrap()}
+                quote! { Some(#addr_type::try_from(#name).unwrap()) }
             }
-            Table(_) => todo!(),
+            Table(table) => {
+                if let Some((value, value_type)) = self.table_field(table) {
+                    assert_eq!(addr_type.len_bytes(), value_type.len_bytes());
+                    quote! { Some(#value) }
+                } else {
+                    quote! { None }
+                }
+            }
         };
         let set_function = context.function();
         let value_type = context.value_type();

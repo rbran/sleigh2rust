@@ -379,8 +379,7 @@ impl<'a> MemoryStruct<'a> {
                     .varnodes()
                     .filter(|varnode| Rc::as_ptr(varnode.space()) == space_ptr)
                     .map(|varnode| varnode.as_ref());
-                let ident =
-                    format!("MemorySpace{}", from_sleigh(&space.name));
+                let ident = format!("MemorySpace{}", from_sleigh(&space.name));
                 SpaceStruct::new(&ident, space, varnodes)
             })
             .map(|space| {
@@ -604,8 +603,7 @@ impl<'a> ContextStruct<'a> {
                             && varnode.varnode_type.is_context()
                     })
                     .map(|varnode| varnode.as_ref());
-                let ident =
-                    format!("ContextSpace{}", from_sleigh(&space.name));
+                let ident = format!("ContextSpace{}", from_sleigh(&space.name));
                 SpaceStruct::new(&ident, space, varnodes)
             })
             .map(|space| {

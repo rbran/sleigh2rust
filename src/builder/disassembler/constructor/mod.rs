@@ -5,14 +5,14 @@ use std::rc::Rc;
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use sleigh_rs::semantic::disassembly::{GlobalSet, Variable};
-use sleigh_rs::semantic::pattern::{FieldAnd, FieldOr, FieldProductTable};
+use sleigh_rs::semantic::pattern::{
+    FieldAnd, FieldOr, FieldProductTable, FieldProducts,
+};
 use sleigh_rs::semantic::{Meaning, PrintFmt};
 use sleigh_rs::{Assembly, Block, IntTypeS, NonZeroTypeU, Varnode};
 
 use crate::builder::formater::from_sleigh;
-use crate::builder::{
-    ContextTrait, DisassemblyGenerator, TokenParser, WorkType,
-};
+use crate::builder::{DisassemblyGenerator, TokenParser, WorkType};
 
 use super::{Disassembler, Table};
 
@@ -29,6 +29,18 @@ fn pattern_cmp_token(
         sleigh_rs::semantic::pattern::CmpOp::Gt => quote!(>),
         sleigh_rs::semantic::pattern::CmpOp::Le => quote!(<=),
         sleigh_rs::semantic::pattern::CmpOp::Ge => quote!(>=),
+    }
+}
+fn pattern_cmp_token_neg(
+    value: &sleigh_rs::semantic::pattern::CmpOp,
+) -> TokenStream {
+    match value {
+        sleigh_rs::semantic::pattern::CmpOp::Eq => quote!(!=),
+        sleigh_rs::semantic::pattern::CmpOp::Ne => quote!(==),
+        sleigh_rs::semantic::pattern::CmpOp::Lt => quote!(>=),
+        sleigh_rs::semantic::pattern::CmpOp::Gt => quote!(<=),
+        sleigh_rs::semantic::pattern::CmpOp::Le => quote!(>),
+        sleigh_rs::semantic::pattern::CmpOp::Ge => quote!(<),
     }
 }
 
@@ -245,10 +257,11 @@ impl<'a> Constructor<'a> {
     }
 }
 fn token_len_from_fields_and<'a>(
-    fields: impl Iterator<Item = &'a FieldAnd>,
+    fields: &'a [FieldAnd],
 ) -> Option<NonZeroTypeU> {
     use sleigh_rs::semantic::pattern::{ConstraintVariable, Reference};
     fields
+        .iter()
         .filter_map(|field| match field {
             FieldAnd::Constraint {
                 field,
@@ -283,20 +296,15 @@ struct BlockParser<'a, 'b> {
     block_len: Ident,
 
     token_param: Ident,
-    token_parser: Option<&'b TokenParser<'a>>,
-    token_parser_instance: Ident,
 
     global_set_param: &'b Ident,
     context_param: Ident,
     context_current: Ident,
-    context_trait: &'b ContextTrait<'a>,
     inst_start: &'b Ident,
-    inst_work_type: &'b WorkType,
 
     constructor: &'b Constructor<'a>,
 
     block: &'a Block,
-
     //table and ass variables can't be duplicated, and they will be later used
     //by disassembly/execution
     //table_vars:
@@ -306,7 +314,7 @@ struct BlockParser<'a, 'b> {
     //context_vars: HashMap<*const Varnode, ParsedField<&'a Varnode>>,
 
     //variables containing the produced values from the pattern
-    produced_tables: HashMap<*const sleigh_rs::Table, (Ident, Ident)>,
+    produced_tables: HashMap<*const sleigh_rs::Table, Ident>,
     produced_fields: HashMap<*const Assembly, Ident>,
     //value_extraction: TokenStream,
 }
@@ -314,18 +322,14 @@ impl<'a, 'b> BlockParser<'a, 'b> {
     pub fn generate_block(
         disassembler: &'b Disassembler<'a>,
         global_set_param: &'b Ident,
-        context_trait: &'b ContextTrait<'a>,
         inst_start: &'b Ident,
-        inst_work_type: &'b WorkType,
         constructor: &'b Constructor<'a>,
         block: &'a Block,
     ) -> TokenStream {
         let mut helper = BlockParser::new(
             disassembler,
             global_set_param,
-            context_trait,
             inst_start,
-            inst_work_type,
             constructor,
             block,
         );
@@ -334,12 +338,33 @@ impl<'a, 'b> BlockParser<'a, 'b> {
     pub fn new(
         disassembler: &'b Disassembler<'a>,
         global_set_param: &'b Ident,
-        context_trait: &'b ContextTrait<'a>,
         inst_start: &'b Ident,
-        inst_work_type: &'b WorkType,
         constructor: &'b Constructor<'a>,
         block: &'a Block,
     ) -> Self {
+        let produced_tables = block
+            .produced()
+            .tables()
+            .iter()
+            .map(|field_table| {
+                let table = field_table.table().as_ref();
+                (
+                    table as *const _,
+                    format_ident!("{}", from_sleigh(&table.name)),
+                )
+            })
+            .collect();
+        let produced_fields = block
+            .produced()
+            .fields()
+            .iter()
+            .map(|field| {
+                (
+                    field.as_ref() as *const _,
+                    format_ident!("{}", from_sleigh(&field.name)),
+                )
+            })
+            .collect();
         BlockParser {
             disassembler,
             block_len: format_ident!("block_len"),
@@ -347,343 +372,136 @@ impl<'a, 'b> BlockParser<'a, 'b> {
             token_param: format_ident!("tokens"),
             context_param: format_ident!("context"),
             context_current: format_ident!("context_current"),
-            token_parser: None,
-            token_parser_instance: format_ident!("token_parser"),
-            context_trait,
             inst_start,
-            inst_work_type,
             constructor,
             block,
-            produced_tables: HashMap::new(),
-            produced_fields: HashMap::new(),
+            produced_tables,
+            produced_fields,
         }
     }
-    fn build_token_parser(&mut self, len_bytes: NonZeroTypeU) -> TokenStream {
-        let token_parser =
-            self.disassembler.token_parsers.get(&len_bytes).unwrap();
+    fn token_parser(
+        &self,
+        len_bytes: NonZeroTypeU,
+    ) -> Option<&'b TokenParser<'a>> {
+        self.disassembler.token_parsers.get(&len_bytes)
+    }
+    fn gen_new_token_parser(
+        &self,
+        token_parser: &'b TokenParser<'a>,
+    ) -> TokenStream {
         let creator = token_parser.creator();
-        let block_len = &self.block_len;
-        let inst_work_type = self.inst_work_type;
 
         let token_struct = token_parser.name();
-        let token_var = &self.token_parser_instance;
         let token_param = &self.token_param;
-        let len_bytes = len_bytes.get();
-        self.token_parser = Some(token_parser);
         quote! {
-            let #token_var =
-                #token_struct::#creator(#token_param)?;
-            #block_len = #len_bytes as #inst_work_type;
+            #token_struct::#creator(#token_param)?
         }
     }
     //create the variable (if necessary) and return its name
-    fn ass_field<'c>(
-        &'c mut self,
+    fn gen_ass_field<'c>(
+        &'c self,
         ass: &'a Assembly,
-    ) -> (Option<TokenStream>, &'c Ident, WorkType) {
+        token_parser: Option<&'b TokenParser<'a>>,
+        token_parser_name: &Ident,
+    ) -> Option<TokenStream> {
+        use sleigh_rs::semantic::assembly::AssemblyType::*;
+        let ass_ptr: *const _ = ass;
+        match &ass.assembly_type {
+            Epsilon => None,
+            Start(_) => None,
+            Next(_) => unreachable!("inst_next before the pattern match?"),
+            Field(_) => {
+                //if this fields is produced, create a var for it, otherwise
+                //do nothing
+                self.produced_fields.get(&ass_ptr).map(|name| {
+                    let token_field = token_parser.unwrap().field(ass);
+                    let token_read_name = token_field.read();
+                    quote! {
+                        let #name = #token_parser_name.#token_read_name();
+                    }
+                })
+            }
+        }
+    }
+    fn get_ass_field_value(
+        &self,
+        ass: &'a Assembly,
+        token_parser: Option<&'b TokenParser<'a>>,
+        token_parser_name: &Ident,
+    ) -> TokenStream {
         match &ass.assembly_type {
             sleigh_rs::semantic::assembly::AssemblyType::Epsilon => {
                 todo!("epsilon?")
             }
             sleigh_rs::semantic::assembly::AssemblyType::Start(_) => {
-                //just return the param
-                (None, self.inst_start, *self.inst_work_type)
+                self.inst_start.to_token_stream()
             }
             sleigh_rs::semantic::assembly::AssemblyType::Next(_) => {
                 todo!("inst_next before the pattern match?")
             }
             sleigh_rs::semantic::assembly::AssemblyType::Field(_) => {
                 //check if this field was already created, otherwise create it
-                let token_parser_current = &self.token_parser_instance;
-                let token_field = self.token_parser.unwrap().field(ass);
-                let token_read_name = token_field.read();
-                let (name, creation) = match self.produced_fields.entry(ass) {
-                    std::collections::hash_map::Entry::Occupied(entry) => {
-                        let name: &_ = entry.into_mut();
-                        (name, None)
+                let ass_ptr: *const _ = ass;
+                match self.produced_fields.get(&ass_ptr) {
+                    None => {
+                        let token_field = token_parser.unwrap().field(ass);
+                        let token_read_name = token_field.read();
+                        quote! {
+                            #token_parser_name.#token_read_name()
+                        }
                     }
-                    std::collections::hash_map::Entry::Vacant(entry) => {
-                        let name = format_ident!("{}", from_sleigh(&ass.name));
-                        let name: &_ = entry.insert(name);
-                        let creation = quote! {
-                            let #name = #token_parser_current.#token_read_name();
-                        };
-                        (name, Some(creation))
-                    }
-                };
-                let return_type = WorkType::from_ass(ass);
-                (creation, name, return_type)
+                    Some(name) => name.to_token_stream(),
+                }
             }
         }
     }
     //return the function call that return the value
-    fn context_field(
-        &mut self,
-        varnode: &'a Varnode,
-    ) -> (TokenStream, WorkType) {
-        let context = self.context_trait.varnode(varnode);
+    fn gen_context_field_read(&self, varnode: &'a Varnode) -> TokenStream {
+        let context = self.disassembler.context_trait.varnode(varnode);
         let context_func = context.read();
         let context_param = &self.context_param;
-
-        let call = quote! {
-            #context_param.#context_func()
-        };
-        let context_type = *context.return_type();
-        (call, context_type)
-    }
-    fn table_field(
-        &mut self,
-        table: &'a sleigh_rs::Table,
-    ) -> (Option<TokenStream>, &(Ident, Ident)) {
-        let table_ptr: *const _ = table;
-        match self.produced_tables.entry(table_ptr) {
-            std::collections::hash_map::Entry::Occupied(entry) => {
-                (None, entry.into_mut() as &_)
-            }
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                let variable = format_ident!("{}", from_sleigh(&table.name));
-                let creator = format_ident!("{}_parsing", variable);
-                let table = self.disassembler.tables.get(&table_ptr).unwrap();
-                let context_current = &self.context_current;
-                let table_enum = table.name();
-                let table_creator = table.parse_name();
-                let tokens = &self.token_param;
-                let inst_start = self.inst_start;
-                let global_set = self.global_set_param;
-                let creation = quote! {
-                    let #creator = #table_enum::#table_creator(
-                        #tokens,
-                        &mut #context_current,
-                        #inst_start,
-                        #global_set,
-                    );
-                };
-                let name: &_ = entry.insert((creator, variable));
-                (Some(creation), name)
-            }
-        }
-    }
-    fn build_constraint(
-        &mut self,
-        value_verify: impl ToTokens,
-        value_verify_type: &WorkType,
-        constraint: &'a sleigh_rs::semantic::pattern::Constraint,
-    ) -> TokenStream {
-        let value = self.expr(&constraint.value().expr);
-        let cons_op = pattern_cmp_token(constraint.op());
         quote! {
-            #value_verify #cons_op #value as #value_verify_type
+            #context_param.#context_func()
         }
     }
-    fn build_or_fields(
-        &mut self,
-        block: &'a Block,
-        fields: &'a [FieldOr],
-    ) -> TokenStream {
-        use sleigh_rs::semantic::pattern::*;
-        fields.iter().map(|field| match field {
-            FieldOr::Constraint {
-                field: ConstraintVariable::Assembly { src: _, assembly },
-                constraint,
-                ..
-            } => {
-                let block_len = assembly.token_len() / 8;
-                let inst_work_type = self.inst_work_type;
-                let token_parser = NonZeroTypeU::new(block_len)
-                    .map(|len| self.build_token_parser(len));
-                let block_len_bytes = block_len / 8;
-                let (creation, name, value_type) = self.ass_field(assembly);
-                let name = name.clone();
-                let check =
-                    self.build_constraint(&name, &value_type, constraint);
-                let field = block
-                    .produced()
-                    .fields()
-                    .iter()
-                    .find(|search| Rc::as_ptr(search) == Rc::as_ptr(assembly))
-                    .map(|_| name);
-                let tables = self
-                    .block
-                    .produced()
-                    .tables()
-                    .iter()
-                    .map(|_| quote! {None});
-                quote! {
-                    #token_parser
-                    #creation
-                    if (#check) {
-                        return Some((
-                            (#(#tables),*),
-                            (#field),
-                            #inst_work_type::try_from(#block_len_bytes).unwrap(),
-                        ));
-                    }
-                }
-            }
-            FieldOr::Constraint {
-                field: ConstraintVariable::Varnode { src: _, varnode },
-                constraint,
-                ..
-            } => {
-                let (value, value_type) = self.context_field(varnode);
-                let check =
-                    self.build_constraint(value, &value_type, constraint);
-                let tables = self
-                    .block
-                    .produced()
-                    .tables()
-                    .iter()
-                    .map(|_| quote! {None});
-                quote! {
-                    if (#check) {
-                        return Some((
-                            (#(#tables),*),
-                            (/*no fields*/),
-                            0 as inst_work_type,
-                        ));
-                    }
-                }
-            }
-            FieldOr::SubPattern { sub, src } => {
-                let sub = self.gen_sub_constraints(sub, src);
-                let tokens = &self.token_param;
-                let context_current = &self.context_current;
-                let context_param = &self.context_param;
-                let sub_pattern_name = format_ident!("sub_pattern_c{}", src.column);
-                quote! {
-                    let mut #sub_pattern_name = #sub;
-                    let mut #context_current = #context_param.clone();
-                    if let x @ Some(_) = #sub_pattern_name(#tokens, &mut #context_current) {
-                        *#context_param = #context_current;
-                        return x;
-                    }
-                }
-            }
-        }).collect()
+    fn gen_table_field(&self, table: &'a sleigh_rs::Table) -> TokenStream {
+        let table_ptr: *const _ = table;
+        let table = self.disassembler.tables.get(&table_ptr).unwrap();
+        let context_current = &self.context_current;
+        let table_enum = table.name();
+        let table_parser = table.parse_name();
+        let tokens = &self.token_param;
+        let inst_start = self.inst_start;
+        let global_set = self.global_set_param;
+        quote! {
+            #table_enum::#table_parser(
+                #tokens,
+                &mut #context_current,
+                #inst_start,
+                #global_set,
+            )
+        }
     }
-    fn build_and_fields(&mut self, fields: &'a [FieldAnd]) -> TokenStream {
-        use sleigh_rs::semantic::pattern::*;
-        fields
-            .iter()
-            .map(|field| {
-                match field {
-                    FieldAnd::Constraint {
-                        field: ConstraintVariable::Varnode { varnode, .. },
-                        constraint,
-                    } => {
-                        let (value, value_type) = self.context_field(varnode);
-                        let check = self.build_constraint(
-                            value,
-                            &value_type,
-                            constraint,
-                        );
-                        Some(quote! {
-                            if (!(#check)) {
-                                return None;
-                            }
-                        })
-                    }
-                    FieldAnd::Constraint {
-                        field: ConstraintVariable::Assembly { assembly, .. },
-                        constraint,
-                    } => {
-                        let (creation, name, value_type) =
-                            self.ass_field(assembly);
-                        let name = name.clone();
-                        let check = self.build_constraint(
-                            name,
-                            &value_type,
-                            constraint,
-                        );
-                        Some(quote! {
-                            #creation
-                            if (!(#check)) {
-                                return None;
-                            }
-                        })
-                    }
-                    FieldAnd::Field(Reference::Table { table, .. }) => {
-                        let block_len = self.block_len.clone();
-                        let (creation, (creator, name)) = self.table_field(table);
-                        //in and patterns, table can only be created a single time
-                        assert!(creation.is_some());
-                        //TODO check recursive/always for table
-                        Some(quote! {
-                            #creation
-                            let #name = if let Some((len, name)) = #creator {
-                                #block_len = #block_len.max(len);
-                                name
-                            } else {
-                                return None;
-                            };
-                        })
-                    }
-                    FieldAnd::Field(Reference::Assembly {
-                        assembly, ..
-                    }) => {
-                        if matches!(&assembly.assembly_type, sleigh_rs::semantic::assembly::AssemblyType::Epsilon) {
-                            return None
-                        }
-                        let (creation, _name, _return_type) =
-                            self.ass_field(assembly);
-                        creation
-                    }
-                    //this doesn't generate any code
-                    FieldAnd::Field(Reference::Varnode { .. }) => None,
-                    FieldAnd::SubPattern { src, sub } => {
-                        //TODO check recursive/always for table
-                        let sub_func = self.gen_sub_constraints(sub, src);
-                        let tables = sub.produced().tables().iter().map(|table| {
-                            self.produced_tables
-                                .get(&Rc::as_ptr(table.table()))
-                                .map(|x| {
-                                    let name = &x.1;
-                                    quote!{mut #name}
-                                })
-                                .unwrap_or(quote!{_})
-                        });
-                        let fields = sub.produced().fields().iter().map(|field| {
-                            self.produced_fields
-                                .get(&Rc::as_ptr(field))
-                                .map(|x| x.to_token_stream())
-                                .unwrap_or(
-                                    format_ident!(
-                                        "_{}",
-                                        from_sleigh(field.name())
-                                    )
-                                    .to_token_stream(),
-                                )
-                        });
-                        let tokens = &self.token_param;
-                        let context_current = &self.context_current;
-                        let block_len = &self.block_len;
-                        let sub_pattern_name = format_ident!("sub_pattern_c{}", src.column);
-                        Some(quote! {
-                            let mut #sub_pattern_name = #sub_func;
-                            let (
-                                (#(#tables),*),
-                                (#(#fields),*),
-                                sub_len
-                             ) = #sub_pattern_name(#tokens, &mut #context_current)?;
-                             #block_len = #block_len.max(sub_len);
-                        })
-                    }
-                }
-            })
-            .filter_map(|x| x)
-            .collect()
+    fn get_table_field_name(&self, table: &'a sleigh_rs::Table) -> TokenStream {
+        let table_ptr: *const _ = table;
+        match self.produced_tables.get(&table_ptr) {
+            None => quote! {_},
+            Some(name) => name.to_token_stream(),
+        }
     }
     fn process(&mut self) -> TokenStream {
         match self.block {
-            block @ Block::Or {
+            Block::Or {
                 fields,
                 len: _,
-                products: _,
+                products,
             } => {
-                let fields = self.build_or_fields(block, fields);
+                let fields = fields
+                    .iter()
+                    .map(|field| self.gen_field_or(field, products));
                 quote! {
                     |tokens, context: &mut T| {
-                        #fields
+                        #(#fields)*
                         None
                     }
                 }
@@ -694,147 +512,461 @@ impl<'a, 'b> BlockParser<'a, 'b> {
                 right,
                 right_len: _,
                 products,
-            } => {
-                //TODO use left_len and right_len
-                //TODO match the right expression
-                if !right.is_empty() {
-                    unimplemented!("right match pattern is not implemented yet")
+            } => self.gen_field_and(left, right, products),
+        }
+    }
+    fn gen_field_and(
+        &self,
+        left: &'a [FieldAnd],
+        right: &'a [FieldAnd],
+        products: &'a FieldProducts,
+    ) -> TokenStream {
+        use sleigh_rs::semantic::pattern::ConstraintVariable::*;
+        use sleigh_rs::semantic::pattern::Reference;
+        //TODO use left_len and right_len
+        //TODO match the right expression
+        if !right.is_empty() {
+            unimplemented!("right match pattern is not implemented yet")
+        }
+        //generate the token parser, if any
+        let token_parser = token_len_from_fields_and(left)
+            .map(|len| self.token_parser(len).unwrap());
+        let token_parser_name = format_ident!("token_parser");
+        let token_parser_creation = token_parser.map(|token_parser| {
+            let token_new = self.gen_new_token_parser(token_parser);
+            let inst_work_type = &self.disassembler.inst_work_type;
+            let len_bytes = token_parser.token_len().get();
+            let block_len = &self.block_len;
+            quote! {
+                let #token_parser_name = #token_new;
+                #block_len = #len_bytes as #inst_work_type;
+            }
+        });
+
+        //generate variables, don't verify or parse anything
+        let ass_variables = left
+            .iter()
+            //only assembly need to be parsed into variables
+            .filter_map(|field| match field {
+                FieldAnd::Constraint {
+                    field: Assembly { src: _, assembly },
+                    constraint: _,
+                } => Some(assembly),
+                FieldAnd::Field(Reference::Assembly { assembly, src: _ }) => {
+                    Some(assembly)
                 }
-                let token_parser =
-                    token_len_from_fields_and(left.iter().chain(right.iter()))
-                        .map(|len| self.build_token_parser(len));
-                //self.build_and_fields(&left)
-                let inst_work_type = self.inst_work_type;
-                let parser_fields = self.build_and_fields(left);
-                let tables = products.tables().iter().map(|table| {
-                    self
-                        .produced_tables
-                        .get(&Rc::as_ptr(table.table()))
-                        .map(|x| {
-                            let name = &x.1;
-                            quote! {#name}
+                _ => None,
+            })
+            .map(|ass| {
+                self.gen_ass_field(ass, token_parser, &token_parser_name)
+            });
+
+        //verify all the values and build all the tables
+        let verifications = left.iter().filter_map(|field| match field {
+            FieldAnd::Constraint { field, constraint } => {
+                let value = BlockParserValuesDisassembly(self)
+                    .expr(&constraint.value().expr);
+                let cons_op = pattern_cmp_token_neg(constraint.op());
+                match field {
+                    Assembly { src: _, assembly } => {
+                        let field = self.get_ass_field_value(
+                            assembly,
+                            token_parser,
+                            &token_parser_name,
+                        );
+                        let field_type = WorkType::from_ass(assembly);
+                        Some(quote! {
+                            if #field #cons_op #value as #field_type {
+                                return None;
+                            }
                         })
-                        .unwrap_or(quote! {_})
-                });
-                let fields = products.fields().iter().map(|field| {
+                    }
+                    Varnode { src: _, varnode } => {
+                        let field = self.gen_context_field_read(varnode);
+                        let field_type = WorkType::from_varnode(varnode);
+                        Some(quote! {
+                            if #field #cons_op #value as #field_type {
+                                return None;
+                            }
+                        })
+                    }
+                }
+            }
+            FieldAnd::Field(
+                sleigh_rs::semantic::pattern::Reference::Table {
+                    table,
+                    self_ref: _,
+                    src: _,
+                },
+            ) => {
+                let table_name = self.get_table_field_name(&table);
+                let table_parsing = self.gen_table_field(table);
+                let block_len = &self.block_len;
+                let inst_work_type = &self.disassembler.inst_work_type;
+                Some(quote! {
+                    let #table_name = if let Some((len, table)) =
+                            #table_parsing {
+                        #block_len = len as #inst_work_type;
+                        table
+                    } else {
+                        return None;
+                    };
+                })
+            }
+            FieldAnd::Field(_) => None,
+            FieldAnd::SubPattern { src, sub } => {
+                //TODO check recursive/always for table
+                let sub_func = self.gen_sub_pattern(sub);
+                let tables =
+                    sub.produced().tables().iter().map(|table_field| {
+                        self.produced_tables
+                            .get(&Rc::as_ptr(table_field.table()))
+                            .map(|x| x.into_token_stream())
+                            .unwrap_or_else(|| unreachable!())
+                    });
+                let fields = sub.produced().fields().iter().map(|field| {
                     self.produced_fields
                         .get(&Rc::as_ptr(field))
                         .map(|x| x.to_token_stream())
-                        .unwrap_or(
-                            format_ident!("_{}", from_sleigh(field.name()))
-                                .to_token_stream(),
-                        )
+                        .unwrap_or(quote! {_})
                 });
-                let block_len = &self.block_len;
+                let tokens = &self.token_param;
                 let context_current = &self.context_current;
+                let block_len = &self.block_len;
+                let sub_pattern_name =
+                    format_ident!("sub_pattern_c{}", src.column);
+                Some(quote! {
+                    let mut #sub_pattern_name = #sub_func;
+                    let (
+                        (#(mut #tables),*),
+                        (#(#fields),*),
+                        sub_len
+                     ) = #sub_pattern_name(#tokens, &mut #context_current)?;
+                     #block_len = #block_len.max(sub_len);
+                })
+            }
+        });
+
+        let tables = products.tables().iter().map(|table_field| {
+            //TODO what if the table have multiple levels of Option?
+            if let Some(name) =
+                self.produced_tables.get(&Rc::as_ptr(table_field.table()))
+            {
+                let return_table = if table_field.recursive() {
+                    quote! {Box::new(#name)}
+                } else {
+                    name.to_token_stream()
+                };
+                if !table_field.always() {
+                    quote! {Some(#return_table)}
+                } else {
+                    return_table
+                }
+            } else {
+                if table_field.always() {
+                    unreachable!()
+                } else {
+                    return quote! {None};
+                }
+            }
+        });
+        let fields = products
+            .fields()
+            .iter()
+            .map(|field| self.produced_fields.get(&Rc::as_ptr(field)).unwrap());
+        let inst_work_type = &self.disassembler.inst_work_type;
+        let block_len = &self.block_len;
+        let context_current = &self.context_current;
+        quote! {
+            |tokens, context: &mut T| {
+                //used to calculate the current block len
+                let mut #block_len = 0 as #inst_work_type;
+                let mut #context_current = context.clone();
+                #token_parser_creation
+                #(#ass_variables)*
+                #(#verifications)*
+                *context = #context_current;
+                Some((
+                    (#(#tables),*),
+                    (#(#fields),*),
+                    #block_len
+                ))
+            }
+        }
+    }
+    fn gen_field_or(
+        &self,
+        field: &'a FieldOr,
+        products: &'a FieldProducts,
+    ) -> TokenStream {
+        use sleigh_rs::semantic::pattern::*;
+        match field {
+            FieldOr::Constraint {
+                field: ConstraintVariable::Assembly { src: _, assembly },
+                constraint,
+                ..
+            } => {
+                //generate the token parser, if any
+                let token_len = assembly.token_len() / 8;
+                let token_parser = NonZeroTypeU::new(token_len)
+                    .map(|len| self.token_parser(len).unwrap());
+                let token_parser_name = format_ident!("token_parser");
+                let token_parser_creation = token_parser.map(|token_parser| {
+                    let token_new = self.gen_new_token_parser(token_parser);
+                    let inst_work_type = &self.disassembler.inst_work_type;
+                    let len_bytes = token_parser.token_len().get();
+                    let block_len = &self.block_len;
+                    quote! {
+                        let #token_parser_name = #token_new;
+                        #block_len = #len_bytes as #inst_work_type;
+                    }
+                });
+
+                //generate a variable with the assembly that will be
+                //extracted
+                let field_var = self.gen_ass_field(
+                    assembly,
+                    token_parser,
+                    &token_parser_name,
+                );
+
+                //verify the value, if true, return it
+                let value = BlockParserValuesDisassembly(self)
+                    .expr(&constraint.value().expr);
+                let cons_op = pattern_cmp_token(constraint.op());
+                let field = self.get_ass_field_value(
+                    assembly,
+                    token_parser,
+                    &token_parser_name,
+                );
+                let field_type = WorkType::from_ass(assembly);
+                let inst_work_type = self.disassembler.inst_work_type;
+                let token_len_bytes = token_len / 8;
+                let fields = products.fields().iter().map(|field_prod| {
+                    assert_eq!(Rc::as_ptr(assembly), Rc::as_ptr(field_prod));
+                    &field
+                });
+                let tables = products.tables().iter().map(|table_field| {
+                    if table_field.always() {
+                        unreachable!()
+                    } else {
+                        quote! {None}
+                    }
+                });
                 quote! {
-                    |tokens, context: &mut T| {
-                        //used to calculate the current block len
-                        let mut #block_len = 0 as #inst_work_type;
-                        let mut #context_current = context.clone();
-                        #token_parser
-                        #parser_fields
-                        *context = #context_current;
-                        Some((
+                    #token_parser_creation
+                    #field_var
+                    if #field #cons_op #value as #field_type {
+                        return Some((
                             (#(#tables),*),
                             (#(#fields),*),
-                            #block_len
-                        ))
+                            #inst_work_type::try_from(#token_len_bytes).unwrap(),
+                        ));
+                    }
+                }
+            }
+            FieldOr::Constraint {
+                field: ConstraintVariable::Varnode { src: _, varnode },
+                constraint,
+                ..
+            } => {
+                let value = BlockParserValuesDisassembly(self)
+                    .expr(&constraint.value().expr);
+                let cons_op = pattern_cmp_token(constraint.op());
+                let context = self.gen_context_field_read(varnode);
+                let context_type = WorkType::from_varnode(varnode);
+                let inst_work_type = self.disassembler.inst_work_type;
+                let tables = products.tables().iter().map(|table_field| {
+                    if table_field.always() {
+                        unreachable!()
+                    } else {
+                        quote! {None}
+                    }
+                });
+                quote! {
+                    if #context #cons_op #value as #context_type {
+                        return Some((
+                            (#(#tables),*),
+                            (/*no fields*/),
+                            0 as #inst_work_type,
+                        ));
+                    }
+                }
+            }
+            FieldOr::SubPattern { sub, src } => {
+                let sub_parser = self.gen_sub_pattern(sub);
+                let tokens = &self.token_param;
+                let context_param = &self.context_param;
+                let sub_pattern_name =
+                    format_ident!("sub_pattern_c{}", src.column);
+                let tables: HashMap<_, _> = sub
+                    .produced()
+                    .tables()
+                    .iter()
+                    .map(|field_table| {
+                        let table = field_table.table().as_ref();
+                        let ptr: *const _ = table;
+                        (ptr, format_ident!("{}", from_sleigh(&table.name)))
+                    })
+                    .collect();
+                let fields: HashMap<_, _> = sub
+                    .produced()
+                    .fields()
+                    .iter()
+                    .map(|field| {
+                        let ptr = Rc::as_ptr(field);
+                        (ptr, format_ident!("{}", from_sleigh(&field.name)))
+                    })
+                    .collect();
+                let sub_tables = tables.values();
+                let sub_fields = fields.values();
+                let tables = products.tables().iter().map(|table_field| {
+                    //TODO what if the table have multiple levels of Option?
+                    if let Some(name) =
+                        tables.get(&Rc::as_ptr(table_field.table()))
+                    {
+                        let return_table = if table_field.recursive() {
+                            quote! {Box::new(#name)}
+                        } else {
+                            name.to_token_stream()
+                        };
+                        if !table_field.always() {
+                            quote! {Some(#return_table)}
+                        } else {
+                            return_table
+                        }
+                    } else {
+                        if table_field.always() {
+                            unreachable!()
+                        } else {
+                            return quote! {None};
+                        }
+                    }
+                });
+                let fields = products
+                    .fields()
+                    .iter()
+                    .map(|field| fields.get(&Rc::as_ptr(field)).unwrap());
+                quote! {
+                    let mut #sub_pattern_name = #sub_parser;
+                    let mut context_current = #context_param.clone();
+                    if let Some((
+                        (#(#sub_tables),*),
+                        (#(#sub_fields),*),
+                        sub_pattern_len,
+                    )) = #sub_pattern_name(#tokens, &mut context_current) {
+                        *#context_param = context_current;
+                        return Some((
+                            (#(#tables),*),
+                            (#(#fields),*),
+                            sub_pattern_len,
+                        ));
                     }
                 }
             }
         }
     }
-    pub fn gen_sub_constraints(
-        &mut self,
-        pattern: &'a sleigh_rs::Pattern,
-        src: &'a sleigh_rs::InputSource,
-    ) -> TokenStream {
+    fn gen_sub_pattern(&self, pattern: &'a sleigh_rs::Pattern) -> TokenStream {
         let context_current = format_ident!("context_current");
-
-        let inst_len = format_ident!("inst_len");
         let block_len = format_ident!("block_len");
         let token_current = format_ident!("token_current");
+        let inst_work_type = self.disassembler.inst_work_type;
 
-        let inst_work_type = self.inst_work_type;
-
+        let pattern_produced_tables: HashMap<_, _> = pattern
+            .produced()
+            .tables()
+            .iter()
+            .map(|field_table| {
+                let table = field_table.table().as_ref();
+                let table_ptr: *const _ = table;
+                (table_ptr, format_ident!("{}", from_sleigh(&table.name)))
+            })
+            .collect();
+        let pattern_produced_fields: HashMap<_, _> = pattern
+            .produced()
+            .fields()
+            .iter()
+            .map(|field| {
+                let ptr = Rc::as_ptr(field);
+                (ptr, format_ident!("{}", from_sleigh(&field.name)))
+            })
+            .collect();
         //for each block:
         //* make the verifications
         //* parse any sub tables
         //* create variables (table/assembly)
-        let mut blocks_parsing = TokenStream::new();
         //variables created by the blocks
-        let mut table_vars: HashMap<*const sleigh_rs::Table, Ident> =
-            HashMap::new();
-        let mut ass_vars: HashMap<*const Assembly, Ident> = HashMap::new();
-        for block in pattern.blocks().iter() {
+        let blocks = pattern.blocks().iter().enumerate();
+        let blocks_parsing = blocks.map(|(block_index, block)| {
             let parse = Self::generate_block(
                 self.disassembler,
                 self.global_set_param,
-                &self.context_trait,
                 self.inst_start,
-                &inst_work_type,
                 self.constructor,
                 block,
             );
-            let mut tables: Vec<(*const sleigh_rs::Table, Ident)> = block
-                .produced()
-                .tables()
-                .iter()
-                .map(|field_table| {
-                    let table = field_table.table().as_ref();
-                    (
-                        table as *const _,
-                        format_ident!("{}", from_sleigh(&table.name)),
-                    )
-                })
-                .collect();
-            let mut fields: Vec<(*const sleigh_rs::Assembly, Ident)> = block
-                .produced()
-                .fields()
-                .iter()
-                .map(|field| {
-                    (
-                        field.as_ref() as *const _,
-                        format_ident!("{}", from_sleigh(&field.name)),
-                    )
-                })
-                .collect();
-            let table_var_print = tables.iter().map(|(_, name)| name);
-            let field_var_print = fields.iter().map(|(_, name)| name);
-            let sub_pattern_name = format_ident!("sub_pattern_c{}", src.column);
-            blocks_parsing.extend(quote! {
-                let mut #sub_pattern_name = #parse;
+            let block_produced_tables =
+                block.produced().tables().iter().map(|field_table| {
+                    pattern_produced_tables
+                        .get(&Rc::as_ptr(field_table.table()))
+                        .map(|table_name| table_name.to_token_stream())
+                        .unwrap_or(quote! {_})
+                });
+            let block_produced_fields =
+                block.produced().fields().iter().map(|field| {
+                    pattern_produced_fields
+                        .get(&Rc::as_ptr(field))
+                        .map(|field_name| field_name.to_token_stream())
+                        .unwrap_or(quote! {_})
+                });
+            let block_name = format_ident!("block_{}", block_index);
+            quote! {
+                let mut #block_name = #parse;
                 let (
-                    (#(mut #table_var_print),*),
-                    (#(#field_var_print),*),
+                    (#(mut #block_produced_tables),*),
+                    (#(#block_produced_fields),*),
                     block_len
-                ) = #sub_pattern_name(#token_current, &mut #context_current)?;
-                #token_current = &#token_current[usize::try_from(block_len).unwrap()..];
-                #inst_len += block_len;
-            });
-            table_vars.extend(tables.drain(..));
-            ass_vars.extend(fields.drain(..));
-        }
-        let tables =
-            pattern.produced().tables().iter().map(|table| {
-                table_vars.get(&Rc::as_ptr(table.table())).unwrap()
-            });
-        let fields = pattern
-            .produced()
-            .fields()
-            .iter()
-            .map(|field| ass_vars.get(&Rc::as_ptr(field)).unwrap());
+                ) = #block_name(#token_current, &mut #context_current)?;
+                #token_current = &#token_current[
+                    usize::try_from(block_len).unwrap()..
+                ];
+            }
+        });
+        let tables = pattern.produced().tables().iter().map(|table_field| {
+            //TODO what if the table have multiple levels of Option?
+            if let Some(name) =
+                pattern_produced_tables.get(&Rc::as_ptr(table_field.table()))
+            {
+                let return_table = if table_field.recursive() {
+                    quote! {Box::new(#name)}
+                } else {
+                    name.to_token_stream()
+                };
+                if !table_field.always() {
+                    quote! {Some(#return_table)}
+                } else {
+                    return_table
+                }
+            } else {
+                if table_field.always() {
+                    unreachable!()
+                } else {
+                    return quote! {None};
+                }
+            }
+        });
+        let fields = pattern.produced().fields().iter().map(|field| {
+            pattern_produced_fields.get(&Rc::as_ptr(field)).unwrap()
+        });
         quote! {
             |token, context: &mut T| {
                 //each block will increment this value by its size
-                let mut #inst_len = 0 as #inst_work_type;
                 let mut #block_len = 0 as #inst_work_type;
                 let mut #context_current = context.clone();
                 //the current_token will be increseased by each block, so the next
                 //block knows when to start parsing
                 let mut #token_current = token;
-                #blocks_parsing
+                #(#blocks_parsing)*
                 *context = #context_current;
                 Some((
                     (#(#tables),*),
@@ -846,8 +978,11 @@ impl<'a, 'b> BlockParser<'a, 'b> {
     }
 }
 
+struct BlockParserValuesDisassembly<'a, 'b, 'c>(&'c BlockParser<'a, 'b>);
 //Block parser only use Disassembly for the pattern value, so only value is used
-impl<'a, 'b> DisassemblyGenerator<'a> for BlockParser<'a, 'b> {
+impl<'a, 'b, 'c> DisassemblyGenerator<'a>
+    for BlockParserValuesDisassembly<'a, 'b, 'c>
+{
     fn global_set(&mut self, _global_set: &GlobalSet) -> TokenStream {
         unreachable!()
     }
@@ -859,12 +994,13 @@ impl<'a, 'b> DisassemblyGenerator<'a> for BlockParser<'a, 'b> {
         match value {
             ReadScope::Integer(value) => quote! {(#value as i64)},
             ReadScope::Varnode(varnode) => {
-                let (value, _value_type) = self.context_field(varnode);
+                let value = self.0.gen_context_field_read(varnode);
                 //TODO solve IntTypeS instead of i64
                 quote! { i64::try_from(#value).unwrap() }
             }
             ReadScope::Assembly(ass) => {
-                let value = self.produced_fields.get(&Rc::as_ptr(ass)).unwrap();
+                let value =
+                    self.0.produced_fields.get(&Rc::as_ptr(ass)).unwrap();
                 //TODO solve IntTypeS instead of i64
                 quote! { i64::try_from(#value).unwrap() }
             }
@@ -1174,9 +1310,7 @@ impl<'a> Disassembler<'a> {
             let parse = BlockParser::generate_block(
                 self,
                 &global_set_param,
-                &self.context_trait,
                 &inst_start,
-                &inst_work_type,
                 constructor,
                 block,
             );

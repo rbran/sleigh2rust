@@ -12,7 +12,6 @@ pub struct GlobalSetContext<'a> {
     function: Ident,
     sleigh: &'a sleigh_rs::Varnode,
 }
-const MEMORY_TRAIT_VARNODE_WRITE: &str = "set";
 impl<'a> GlobalSetContext<'a> {
     pub fn new(varnode: &'a sleigh_rs::Varnode) -> Self {
         let function = format_ident!("set_{}", from_sleigh(&varnode.name));
@@ -31,7 +30,7 @@ impl<'a> GlobalSetContext<'a> {
         let function = &self.function;
         let value_type = self.value_type();
         quote! {
-            fn #function(&mut self, address: #addr_type, value: #value_type);
+            fn #function(&mut self, address: Option<#addr_type>, value: #value_type);
         }
     }
 }

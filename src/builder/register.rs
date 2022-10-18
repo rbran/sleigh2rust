@@ -107,6 +107,7 @@ impl<'a> RegistersEnum<'a> {
                 }
             }
         }
+        //TODO: from meaning, with could use the meaning to display
         Self::from_iterator(name, iter_vec.into_iter())
     }
 
@@ -146,6 +147,20 @@ impl<'a> RegistersEnum<'a> {
             #[derive(Clone, Copy, Debug)]
             pub enum #name {
                 #(#elements)*
+            }
+        }
+    }
+    pub fn generate_impl_display(&self) -> TokenStream {
+        let name = self.name();
+        let elements = self.registers().map(|(name, _reg)| name);
+        let elements_display = self.registers().map(|(_name, reg)| &reg.name);
+        quote! {
+            impl core::fmt::Display for #name {
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {
+                    match self {
+                        #(Self::#elements => write!(f, #elements_display),)*
+                    }
+                }
             }
         }
     }

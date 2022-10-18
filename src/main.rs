@@ -1,195 +1,354 @@
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::path::Path;
 
 use sleigh2rust;
 
-use sleigh2rust::builder::formater::*;
-
-const ARCH_FILES: &[&str] = &[
-//TODO What is `export 0:0;`?
-//"/home/rbran/src/ghidra/Ghidra/Processors/68000/data/languages/68040.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/68000/data/languages/68030.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/68000/data/languages/coldfire.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/68000/data/languages/68020.slaspec",
-
-//TODO: https://github.com/NationalSecurityAgency/ghidra/pull/4016R
-//"/home/rbran/src/ghidra/Ghidra/Processors/HCS12/data/languages/HCS12.slaspec",
-
-//TODO: disassembly pointing to non context varnode???
-//"/home/rbran/src/ghidra/Ghidra/Processors/Atmel/data/languages/avr32a.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Atmel/data/languages/avr8xmega.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Atmel/data/languages/avr8eind.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/8048/data/languages/8048.slaspec",
-
-//TODO: sometimes the dst addr is 32, other time 64
-//"/home/rbran/src/ghidra/Ghidra/Processors/PA-RISC/data/languages/pa-risc32be.slaspec",
-
-//TODO: try to assign a 32bits value into a 64bits varnode
-//"/home/rbran/src/ghidra/Ghidra/Processors/RISCV/data/languages/riscv.ilp32d.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/RISCV/data/languages/riscv.lp64d.slaspec",
-
-//TODO: bitrange auto adapt to an arbitrary size
-//TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-//"/home/rbran/src/ghidra/Ghidra/Processors/V850/data/languages/V850.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/6502/data/languages/6502.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/6502/data/languages/65c02.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/CR16/data/languages/CR16B.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/CR16/data/languages/CR16C.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Z80/data/languages/z80.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Z80/data/languages/z180.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/HCS08/data/languages/HC08.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/HCS08/data/languages/HCS08.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/HCS08/data/languages/HC05.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/tricore/data/languages/tricore.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/MC6800/data/languages/6809.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/MC6800/data/languages/6805.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/MC6800/data/languages/H6309.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/MCS96/data/languages/MCS96.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/TI_MSP430/data/languages/TI_MSP430.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/TI_MSP430/data/languages/TI_MSP430X.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Atmel/data/languages/avr8.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Atmel/data/languages/avr8e.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/CP1600/data/languages/CP1600.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/SuperH/data/languages/sh-1.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/SuperH/data/languages/sh-2.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/SuperH/data/languages/sh-2a.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/M8C/data/languages/m8c.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/8051/data/languages/80251.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/8051/data/languages/80390.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/8051/data/languages/8051.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/8051/data/languages/mx51.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PIC/data/languages/pic16.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PIC/data/languages/pic16f.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PIC/data/languages/pic17c7xx.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PIC/data/languages/pic18.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PIC/data/languages/PIC24E.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PIC/data/languages/PIC24F.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PIC/data/languages/PIC24H.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PIC/data/languages/dsPIC30F.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PIC/data/languages/dsPIC33C.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PIC/data/languages/dsPIC33E.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PIC/data/languages/dsPIC33F.slaspec",
-
-//TODO: use value from non export table
-//"/home/rbran/src/ghidra/Ghidra/Processors/MIPS/data/languages/mips32be.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/MIPS/data/languages/mips32le.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/MIPS/data/languages/mips32R6be.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/MIPS/data/languages/mips32R6le.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/MIPS/data/languages/mips64be.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/MIPS/data/languages/mips64le.slaspec",
-
-//TODO: re-export from a table that also export const
-//"/home/rbran/src/ghidra/Ghidra/Processors/AARCH64/data/languages/AARCH64.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/AARCH64/data/languages/AARCH64BE.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/AARCH64/data/languages/AARCH64_AppleSilicon.slaspec",
-
-//TODO: Cpool
-//"/home/rbran/src/ghidra/Ghidra/Processors/JVM/data/languages/JVM.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Dalvik/data/languages/Dalvik_Base.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Dalvik/data/languages/Dalvik_ODEX_KitKat.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Dalvik/data/languages/Dalvik_DEX_KitKat.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Dalvik/data/languages/Dalvik_DEX_Lollipop.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Dalvik/data/languages/Dalvik_DEX_Marshmallow.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Dalvik/data/languages/Dalvik_DEX_Nougat.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Dalvik/data/languages/Dalvik_DEX_Oreo.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Dalvik/data/languages/Dalvik_DEX_Pie.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Dalvik/data/languages/Dalvik_DEX_Android10.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Dalvik/data/languages/Dalvik_DEX_Android11.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Dalvik/data/languages/Dalvik_DEX_Android12.slaspec",
-
-//TODO: AND-OP a 64bit value with a 32bit variable, outputing a 32bit value
-//"/home/rbran/src/ghidra/Ghidra/Processors/PowerPC/data/languages/ppc_32_be.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PowerPC/data/languages/ppc_32_le.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PowerPC/data/languages/ppc_32_quicciii_be.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PowerPC/data/languages/ppc_32_quicciii_le.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PowerPC/data/languages/ppc_32_4xx_be.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PowerPC/data/languages/ppc_32_4xx_le.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PowerPC/data/languages/ppc_64_be.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PowerPC/data/languages/ppc_64_le.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PowerPC/data/languages/ppc_64_isa_be.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PowerPC/data/languages/ppc_64_isa_le.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PowerPC/data/languages/ppc_64_isa_altivec_be.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PowerPC/data/languages/ppc_64_isa_altivec_le.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PowerPC/data/languages/ppc_64_isa_altivec_vle_be.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PowerPC/data/languages/ppc_64_isa_vle_be.slaspec",
-
-//TODO: Jmp into a 16bit address
-//"/home/rbran/src/ghidra/Ghidra/Processors/x86/data/languages/x86.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/x86/data/languages/x86-64.slaspec",
-
-//TODO: jmp into 16/8bit address
-//"/home/rbran/src/ghidra/Ghidra/Processors/8085/data/languages/8085.slaspec",
-
-//TODO: Op 32bits value with Int greater then 32bits
-//"/home/rbran/src/ghidra/Ghidra/Processors/Sparc/data/languages/SparcV9_32.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Sparc/data/languages/SparcV9_64.slaspec",
-
-"/home/rbran/src/ghidra/Ghidra/Processors/ARM/data/languages/ARM4_be.slaspec",
-"/home/rbran/src/ghidra/Ghidra/Processors/ARM/data/languages/ARM4_le.slaspec",
-"/home/rbran/src/ghidra/Ghidra/Processors/ARM/data/languages/ARM4t_be.slaspec",
-"/home/rbran/src/ghidra/Ghidra/Processors/ARM/data/languages/ARM4t_le.slaspec",
-"/home/rbran/src/ghidra/Ghidra/Processors/ARM/data/languages/ARM5_be.slaspec",
-"/home/rbran/src/ghidra/Ghidra/Processors/ARM/data/languages/ARM5_le.slaspec",
-"/home/rbran/src/ghidra/Ghidra/Processors/ARM/data/languages/ARM5t_be.slaspec",
-"/home/rbran/src/ghidra/Ghidra/Processors/ARM/data/languages/ARM5t_le.slaspec",
-"/home/rbran/src/ghidra/Ghidra/Processors/ARM/data/languages/ARM6_be.slaspec",
-"/home/rbran/src/ghidra/Ghidra/Processors/ARM/data/languages/ARM6_le.slaspec",
-"/home/rbran/src/ghidra/Ghidra/Processors/ARM/data/languages/ARM7_be.slaspec",
-"/home/rbran/src/ghidra/Ghidra/Processors/ARM/data/languages/ARM7_le.slaspec",
-"/home/rbran/src/ghidra/Ghidra/Processors/ARM/data/languages/ARM8_be.slaspec",
-"/home/rbran/src/ghidra/Ghidra/Processors/ARM/data/languages/ARM8_le.slaspec",
-//
-//"/home/rbran/src/ghidra/Ghidra/Processors/DATA/data/languages/data-be-64.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/DATA/data/languages/data-le-64.slaspec",
-//
-//"/home/rbran/src/ghidra/Ghidra/Processors/SuperH4/data/languages/SuperH4_be.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/SuperH4/data/languages/SuperH4_le.slaspec",
-//
-//"/home/rbran/src/ghidra/Ghidra/Processors/Toy/data/languages/toy_builder_be_align2.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Toy/data/languages/toy_builder_le_align2.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Toy/data/languages/toy_builder_le.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Toy/data/languages/toy_be_posStack.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Toy/data/languages/toy_builder_be.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Toy/data/languages/toy_wsz_be.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Toy/data/languages/toy_wsz_le.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Toy/data/languages/toy_be.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Toy/data/languages/toy_le.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Toy/data/languages/toy64_be.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Toy/data/languages/toy64_le.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/Toy/data/languages/toy64_be_harvard.slaspec",
-//
-//"/home/rbran/src/ghidra/Ghidra/Processors/PIC/data/languages/pic12c5xx.slaspec",
-//"/home/rbran/src/ghidra/Ghidra/Processors/PIC/data/languages/pic16c5x.slaspec",
+const ARCH_FILES: &[(&str, &[&str])] = &[
+    (
+        "68000",
+        &[
+            //TODO What is `export 0:0;`?
+            //"68040",
+            //"68030",
+            //"coldfire",
+            //"68020",
+        ],
+    ),
+    (
+        "HCS12",
+        &[
+            //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
+            //"HCS12"
+        ],
+    ),
+    (
+        "Atmel",
+        &[
+            //TODO: disassembly pointing to non context varnode???
+            //"avr32a",
+            //"avr8xmega",
+            //"avr8eind",
+            //TODO: bitrange auto adapt to an arbitrary size
+            //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
+            //"avr8",
+            //"avr8e",
+        ],
+    ),
+    (
+        "8048",
+        &[
+            //TODO: disassembly pointing to non context varnode???
+            //"8048",
+        ],
+    ),
+    (
+        "PA-RISC",
+        &[
+            //TODO: sometimes the dst addr is 32, other time 64
+            //"pa-risc32be",
+        ],
+    ),
+    (
+        "RISCV",
+        &[
+            //TODO: try to assign a 32bits value into a 64bits varnode
+            //"riscv.ilp32d",
+            //"riscv.lp64d",
+        ],
+    ),
+    (
+        "V850",
+        &[
+            //TODO: bitrange auto adapt to an arbitrary size
+            //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
+            //"V850",
+        ],
+    ),
+    (
+        "6502",
+        &[
+            //TODO: bitrange auto adapt to an arbitrary size
+            //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
+            //"6502",
+            //"65c02",
+        ],
+    ),
+    (
+        "CR16",
+        &[
+            //TODO: bitrange auto adapt to an arbitrary size
+            //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
+            //"CR16B",
+            //"CR16C",
+        ],
+    ),
+    (
+        "Z80",
+        &[
+            //TODO: bitrange auto adapt to an arbitrary size
+            //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
+            //"z80",
+            //"z180",
+        ],
+    ),
+    (
+        "HCS08",
+        &[
+            //TODO: bitrange auto adapt to an arbitrary size
+            //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
+            //"HC08",
+            //"HCS08",
+            //"HC05",
+        ],
+    ),
+    (
+        "tricore",
+        &[
+            //TODO: bitrange auto adapt to an arbitrary size
+            //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
+            //"tricore",
+        ],
+    ),
+    (
+        "MC6800",
+        &[
+            //TODO: bitrange auto adapt to an arbitrary size
+            //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
+            //"6809",
+            //"6805",
+            //"H6309",
+        ],
+    ),
+    (
+        "MCS96",
+        &[
+            //TODO: bitrange auto adapt to an arbitrary size
+            //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
+            //"MCS96",
+        ],
+    ),
+    (
+        "TI_MSP430",
+        &[
+            //TODO: bitrange auto adapt to an arbitrary size
+            //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
+            //"TI_MSP430",
+            //"TI_MSP430X",
+        ],
+    ),
+    (
+        "CP1600",
+        &[
+            //TODO: bitrange auto adapt to an arbitrary size
+            //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
+            //"CP1600",
+        ],
+    ),
+    (
+        "M8C",
+        &[
+            //TODO: bitrange auto adapt to an arbitrary size
+            //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
+            //"m8c",
+        ],
+    ),
+    (
+        "8051",
+        &[
+            //TODO: bitrange auto adapt to an arbitrary size
+            //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
+            //"80251",
+            //"80390",
+            //"8051",
+            //"mx51",
+        ],
+    ),
+    (
+        "8085",
+        &[
+            //TODO: jmp into 16/8bit address
+            //"8085",
+        ],
+    ),
+    (
+        "MIPS",
+        &[
+            //TODO: use value from non export table
+            //"mips32be",
+            //"mips32le",
+            //"mips32R6be",
+            //"mips32R6le",
+            //"mips64be",
+            //"mips64le",
+        ],
+    ),
+    (
+        "AARCH64",
+        &[
+            //TODO: re-export from a table that also export const
+            //"AARCH64",
+            //"AARCH64BE",
+            //"AARCH64_AppleSilicon",
+        ],
+    ),
+    (
+        "JVM",
+        &[
+            //TODO: Cpool
+            //"JVM",
+        ],
+    ),
+    (
+        "Dalvik",
+        &[
+            //TODO: Cpool
+            //"Dalvik_Base",
+            //"Dalvik_ODEX_KitKat",
+            //"Dalvik_DEX_KitKat",
+            //"Dalvik_DEX_Lollipop",
+            //"Dalvik_DEX_Marshmallow",
+            //"Dalvik_DEX_Nougat",
+            //"Dalvik_DEX_Oreo",
+            //"Dalvik_DEX_Pie",
+            //"Dalvik_DEX_Android10",
+            //"Dalvik_DEX_Android11",
+            //"Dalvik_DEX_Android12",
+        ],
+    ),
+    (
+        "PowerPC",
+        &[
+            //TODO: AND-OP a 64bit value with a 32bit variable, outputing a 32bit value
+            //"ppc_32_be",
+            //"ppc_32_le",
+            //"ppc_32_quicciii_be",
+            //"ppc_32_quicciii_le",
+            //"ppc_32_4xx_be",
+            //"ppc_32_4xx_le",
+            //"ppc_64_be",
+            //"ppc_64_le",
+            //"ppc_64_isa_be",
+            //"ppc_64_isa_le",
+            //"ppc_64_isa_altivec_be",
+            //"ppc_64_isa_altivec_le",
+            //"ppc_64_isa_altivec_vle_be",
+            //"ppc_64_isa_vle_be",
+        ],
+    ),
+    (
+        "x86",
+        &[
+            //TODO: Jmp into a 16bit address
+            //"x86",
+            //"x86-64",
+        ],
+    ),
+    (
+        "Sparc",
+        &[
+            //TODO: Op 32bits value with Int greater then 32bits
+            //"SparcV9_32",
+            //"SparcV9_64",
+        ],
+    ),
+    (
+        "ARM",
+        &[
+            "ARM4_be", "ARM4_le", "ARM4t_be", "ARM4t_le", "ARM5_be", "ARM5_le",
+            "ARM5t_be", "ARM5t_le", "ARM6_be", "ARM6_le", "ARM7_be", "ARM7_le",
+            "ARM8_be", "ARM8_le",
+        ],
+    ),
+    ("DATA", &["data-be-64", "data-le-64"]),
+    (
+        "SuperH4",
+        &[
+            "SuperH4_be",
+            "SuperH4_le",
+            //TODO: bitrange auto adapt to an arbitrary size
+            //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
+            //"sh-1",
+            //"sh-2",
+            //"sh-2a",
+        ],
+    ),
+    (
+        "Toy",
+        &[
+            "toy_builder_be_align2",
+            "toy_builder_le_align2",
+            "toy_builder_le",
+            "toy_be_posStack",
+            "toy_builder_be",
+            "toy_wsz_be",
+            "toy_wsz_le",
+            "toy_be",
+            "toy_le",
+            "toy64_be",
+            "toy64_le",
+            "toy64_be_harvard",
+        ],
+    ),
+    (
+        "PIC",
+        &[
+            "pic12c5xx",
+            "pic16c5x",
+            //TODO: bitrange auto adapt to an arbitrary size
+            //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
+            //"pic16",
+            //"pic16f",
+            //"pic17c7xx",
+            //"pic18",
+            //"PIC24E",
+            //"PIC24F",
+            //"PIC24H",
+            //"dsPIC30F",
+            //"dsPIC33C",
+            //"dsPIC33E",
+            //"dsPIC33F",
+        ],
+    ),
 ];
 
-fn parse(file: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let sleigh = sleigh_rs::file_to_sleigh(file)?;
+fn parse(arch: &str, variant: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let in_file_name = format!(
+        "/home/rbran/src/ghidra/Ghidra/Processors/{}/data/languages/{}.slaspec",
+        arch, variant
+    );
+    let sleigh = sleigh_rs::file_to_sleigh(&in_file_name)?;
 
-    let out_file = format!("{}.rs", from_sleigh(file).to_lowercase());
-    let out_file = Path::new("/home/rbran/src/sleigh3rust/src")
-        .join(Path::new(&out_file).file_name().unwrap());
-    let mut file = BufWriter::new(File::create(&out_file)?);
+    let out_file_path = Path::new("/home/rbran/src/sleigh3rust")
+        .join(variant.to_lowercase().replace('-', "_"))
+        .join("src");
+    let out_file_name = out_file_path.join("disassembler.rs");
+
+    let mut file = File::create(&out_file_name)?;
     let emu = sleigh2rust::dis(&sleigh);
     file.write_all(emu.to_string().as_bytes())?;
+    drop(file);
 
-    assert!(std::process::Command::new("rustfmt")
-        .arg(out_file)
+    let fmt_success = std::process::Command::new("rustfmt")
+        .arg(out_file_name)
         .status()
         .unwrap()
-        .success());
+        .success();
+    assert!(fmt_success);
     Ok(())
 }
 
 fn main() {
-    //let _ = std::fs::create_dir("/tmp/sleigh/src");
-    for file in ARCH_FILES.iter() {
-        println!("file {}", file);
-        match parse(&file) {
-            Ok(_) => (),
-            Err(e) => {
-                println!("unable: {}", e);
-                return;
+    let _ = std::fs::create_dir("/tmp/sleigh/src");
+    for (arch, variants) in ARCH_FILES.iter() {
+        for variant in variants.iter() {
+            println!("arch {} {}", arch, variant);
+            match parse(arch, variant) {
+                Ok(_) => (),
+                Err(e) => {
+                    println!("unable: {}", e);
+                    return;
+                }
             }
         }
     }
