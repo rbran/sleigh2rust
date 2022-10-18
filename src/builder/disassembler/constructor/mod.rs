@@ -543,6 +543,8 @@ impl<'a, 'b> BlockParser<'a, 'b> {
             }
         });
 
+        let mut produced_tables = HashMap::new();
+
         //generate variables, don't verify or parse anything
         let ass_variables = left
             .iter()
@@ -562,105 +564,127 @@ impl<'a, 'b> BlockParser<'a, 'b> {
             });
 
         //verify all the values and build all the tables
-        let verifications = left.iter().filter_map(|field| match field {
-            FieldAnd::Constraint { field, constraint } => {
-                let value = BlockParserValuesDisassembly(self)
-                    .expr(&constraint.value().expr);
-                let cons_op = pattern_cmp_token_neg(constraint.op());
-                match field {
-                    Assembly { src: _, assembly } => {
-                        let field = self.get_ass_field_value(
-                            assembly,
-                            token_parser,
-                            &token_parser_name,
-                        );
-                        let field_type = WorkType::from_ass(assembly);
-                        Some(quote! {
-                            if #field #cons_op #value as #field_type {
-                                return None;
-                            }
-                        })
-                    }
-                    Varnode { src: _, varnode } => {
-                        let field = self.gen_context_field_read(varnode);
-                        let field_type = WorkType::from_varnode(varnode);
-                        Some(quote! {
-                            if #field #cons_op #value as #field_type {
-                                return None;
-                            }
-                        })
+        let verifications: TokenStream = left
+            .iter()
+            .filter_map(|field| match field {
+                FieldAnd::Constraint { field, constraint } => {
+                    let value = BlockParserValuesDisassembly(self)
+                        .expr(&constraint.value().expr);
+                    let cons_op = pattern_cmp_token_neg(constraint.op());
+                    match field {
+                        Assembly { src: _, assembly } => {
+                            let field = self.get_ass_field_value(
+                                assembly,
+                                token_parser,
+                                &token_parser_name,
+                            );
+                            let field_type = WorkType::from_ass(assembly);
+                            Some(quote! {
+                                if #field #cons_op #value as #field_type {
+                                    return None;
+                                }
+                            })
+                        }
+                        Varnode { src: _, varnode } => {
+                            let field = self.gen_context_field_read(varnode);
+                            let field_type = WorkType::from_varnode(varnode);
+                            Some(quote! {
+                                if #field #cons_op #value as #field_type {
+                                    return None;
+                                }
+                            })
+                        }
                     }
                 }
-            }
-            FieldAnd::Field(
-                sleigh_rs::semantic::pattern::Reference::Table {
-                    table,
-                    self_ref: _,
-                    src: _,
-                },
-            ) => {
-                let table_name = self.get_table_field_name(&table);
-                let table_parsing = self.gen_table_field(table);
-                let block_len = &self.block_len;
-                let inst_work_type = &self.disassembler.inst_work_type;
-                Some(quote! {
-                    let #table_name = if let Some((len, table)) =
-                            #table_parsing {
-                        #block_len = len as #inst_work_type;
-                        table
-                    } else {
-                        return None;
-                    };
-                })
-            }
-            FieldAnd::Field(_) => None,
-            FieldAnd::SubPattern { src, sub } => {
-                //TODO check recursive/always for table
-                let sub_func = self.gen_sub_pattern(sub);
-                let tables =
-                    sub.produced().tables().iter().map(|table_field| {
-                        self.produced_tables
-                            .get(&Rc::as_ptr(table_field.table()))
-                            .map(|x| x.into_token_stream())
-                            .unwrap_or_else(|| unreachable!())
+                FieldAnd::Field(
+                    sleigh_rs::semantic::pattern::Reference::Table {
+                        table,
+                        self_ref: _,
+                        src: _,
+                    },
+                ) => {
+                    let table_name = self.get_table_field_name(&table);
+                    let table_parsing = self.gen_table_field(table);
+                    let block_len = &self.block_len;
+                    let inst_work_type = &self.disassembler.inst_work_type;
+                    produced_tables
+                        .insert(Rc::as_ptr(table), true)
+                        .map(|_| unreachable!());
+                    Some(quote! {
+                        let #table_name = if let Some((len, table)) =
+                                #table_parsing {
+                            #block_len = len as #inst_work_type;
+                            table
+                        } else {
+                            return None;
+                        };
+                    })
+                }
+                FieldAnd::Field(_) => None,
+                FieldAnd::SubPattern { src, sub } => {
+                    //TODO check recursive/always for table
+                    let sub_func = self.gen_sub_pattern(sub);
+                    sub.produced().tables().iter().for_each(|table_field| {
+                        produced_tables
+                            .insert(
+                                Rc::as_ptr(table_field.table()),
+                                table_field.always(),
+                            )
+                            .map(|_| unreachable!());
                     });
-                let fields = sub.produced().fields().iter().map(|field| {
-                    self.produced_fields
-                        .get(&Rc::as_ptr(field))
-                        .map(|x| x.to_token_stream())
-                        .unwrap_or(quote! {_})
-                });
-                let tokens = &self.token_param;
-                let context_current = &self.context_current;
-                let block_len = &self.block_len;
-                let sub_pattern_name =
-                    format_ident!("sub_pattern_c{}", src.column);
-                Some(quote! {
-                    let mut #sub_pattern_name = #sub_func;
-                    let (
-                        (#(mut #tables),*),
-                        (#(#fields),*),
-                        sub_len
-                     ) = #sub_pattern_name(#tokens, &mut #context_current)?;
-                     #block_len = #block_len.max(sub_len);
-                })
-            }
-        });
+                    let tables =
+                        sub.produced().tables().iter().map(|table_field| {
+                            self.produced_tables
+                                .get(&Rc::as_ptr(table_field.table()))
+                                .map(|x| x.into_token_stream())
+                                .unwrap_or_else(|| unreachable!())
+                        });
+                    let fields = sub.produced().fields().iter().map(|field| {
+                        self.produced_fields
+                            .get(&Rc::as_ptr(field))
+                            .map(|x| x.to_token_stream())
+                            .unwrap_or(quote! {_})
+                    });
+                    let tokens = &self.token_param;
+                    let context_current = &self.context_current;
+                    let block_len = &self.block_len;
+                    let sub_pattern_name =
+                        format_ident!("sub_pattern_c{}", src.column);
+                    Some(quote! {
+                        let mut #sub_pattern_name = #sub_func;
+                        let (
+                            (#(mut #tables),*),
+                            (#(#fields),*),
+                            sub_len
+                         ) = #sub_pattern_name(#tokens, &mut #context_current)?;
+                         #block_len = #block_len.max(sub_len);
+                    })
+                }
+            })
+            .collect();
 
         let tables = products.tables().iter().map(|table_field| {
+            let table_ptr = Rc::as_ptr(table_field.table());
             //TODO what if the table have multiple levels of Option?
-            if let Some(name) =
-                self.produced_tables.get(&Rc::as_ptr(table_field.table()))
-            {
+            if let Some(name) = self.produced_tables.get(&table_ptr) {
                 let return_table = if table_field.recursive() {
                     quote! {Box::new(#name)}
                 } else {
                     name.to_token_stream()
                 };
-                if !table_field.always() {
-                    quote! {Some(#return_table)}
-                } else {
-                    return_table
+                match (
+                    table_field.always(),
+                    produced_tables.get(&table_ptr).unwrap(),
+                ) {
+                    //we always produce, the source always produce
+                    (true, true) => return_table,
+                    //we always produce, the source sometime produce
+                    (true, false) => unreachable!(),
+                    //we sometimes produce, the source always produce
+                    //TODO this even happen?
+                    (false, true) => quote! {Some(#return_table)},
+                    //we sometime produce, the source sometime produce
+                    (false, false) => return_table,
                 }
             } else {
                 if table_field.always() {
@@ -684,7 +708,7 @@ impl<'a, 'b> BlockParser<'a, 'b> {
                 let mut #context_current = context.clone();
                 #token_parser_creation
                 #(#ass_variables)*
-                #(#verifications)*
+                #verifications
                 *context = #context_current;
                 Some((
                     (#(#tables),*),
@@ -806,7 +830,13 @@ impl<'a, 'b> BlockParser<'a, 'b> {
                     .map(|field_table| {
                         let table = field_table.table().as_ref();
                         let ptr: *const _ = table;
-                        (ptr, format_ident!("{}", from_sleigh(&table.name)))
+                        (
+                            ptr,
+                            ParsedField::new(
+                                format_ident!("{}", from_sleigh(&table.name)),
+                                field_table.clone(),
+                            ),
+                        )
                     })
                     .collect();
                 let fields: HashMap<_, _> = sub
@@ -818,25 +848,31 @@ impl<'a, 'b> BlockParser<'a, 'b> {
                         (ptr, format_ident!("{}", from_sleigh(&field.name)))
                     })
                     .collect();
-                let sub_tables = tables.values();
+                let sub_tables = tables.values().map(|table| table.name());
                 let sub_fields = fields.values();
-                let tables = products.tables().iter().map(|table_field| {
+                let tables = products.tables().iter().map(|table_produced| {
                     //TODO what if the table have multiple levels of Option?
-                    if let Some(name) =
-                        tables.get(&Rc::as_ptr(table_field.table()))
+                    if let Some(table_sub) =
+                        tables.get(&Rc::as_ptr(table_produced.table()))
                     {
-                        let return_table = if table_field.recursive() {
+                        let name = table_sub.name();
+                        let return_table = if table_produced.recursive() {
                             quote! {Box::new(#name)}
                         } else {
                             name.to_token_stream()
                         };
-                        if !table_field.always() {
-                            quote! {Some(#return_table)}
-                        } else {
-                            return_table
+                        match (table_produced.always(), table_sub.always()) {
+                            //we always produce, the source always produce
+                            (true, true) => return_table,
+                            //we always produce, the source sometime produce
+                            (true, false) => unreachable!(),
+                            //we sometimes produce, the source always produce
+                            (false, true) => quote! {Some(#return_table)},
+                            //we sometime produce, the source sometime produce
+                            (false, false) => return_table,
                         }
                     } else {
-                        if table_field.always() {
+                        if table_produced.always() {
                             unreachable!()
                         } else {
                             return quote! {None};
@@ -879,7 +915,13 @@ impl<'a, 'b> BlockParser<'a, 'b> {
             .map(|field_table| {
                 let table = field_table.table().as_ref();
                 let table_ptr: *const _ = table;
-                (table_ptr, format_ident!("{}", from_sleigh(&table.name)))
+                (
+                    table_ptr,
+                    ParsedField::new(
+                        format_ident!("{}", from_sleigh(&table.name)),
+                        field_table.clone(),
+                    ),
+                )
             })
             .collect();
         let pattern_produced_fields: HashMap<_, _> = pattern
@@ -909,7 +951,7 @@ impl<'a, 'b> BlockParser<'a, 'b> {
                 block.produced().tables().iter().map(|field_table| {
                     pattern_produced_tables
                         .get(&Rc::as_ptr(field_table.table()))
-                        .map(|table_name| table_name.to_token_stream())
+                        .map(|table_name| table_name.name().to_token_stream())
                         .unwrap_or(quote! {_})
                 });
             let block_produced_fields =
@@ -932,23 +974,29 @@ impl<'a, 'b> BlockParser<'a, 'b> {
                 ];
             }
         });
-        let tables = pattern.produced().tables().iter().map(|table_field| {
+        let tables = pattern.produced().tables().iter().map(|table_produced| {
             //TODO what if the table have multiple levels of Option?
-            if let Some(name) =
-                pattern_produced_tables.get(&Rc::as_ptr(table_field.table()))
+            if let Some(table_sub) =
+                pattern_produced_tables.get(&Rc::as_ptr(table_produced.table()))
             {
-                let return_table = if table_field.recursive() {
+                let name = table_sub.name();
+                let return_table = if table_produced.recursive() {
                     quote! {Box::new(#name)}
                 } else {
                     name.to_token_stream()
                 };
-                if !table_field.always() {
-                    quote! {Some(#return_table)}
-                } else {
-                    return_table
+                match (table_produced.always(), table_sub.always()) {
+                    //we always produce, the source always produce
+                    (true, true) => return_table,
+                    //we always produce, the source sometime produce
+                    (true, false) => unreachable!(),
+                    //we sometimes produce, the source always produce
+                    (false, true) => quote! {Some(#return_table)},
+                    //we sometime produce, the source sometime produce
+                    (false, false) => return_table,
                 }
             } else {
-                if table_field.always() {
+                if table_produced.always() {
                     unreachable!()
                 } else {
                     return quote! {None};
@@ -1180,8 +1228,19 @@ impl<'a> Disassembler<'a> {
                     let field_name = field.name();
                     let table = self.tables.get(&Rc::as_ptr(field.table())).unwrap();
                     let display_fun = table.display_extend_name();
-                    quote! {
-                        #field_name.#display_fun(#display_param, #context_param);
+                    if field.always() {
+                        quote! {
+                            #field_name.#display_fun(#display_param, #context_param);
+                        }
+                    } else {
+                        quote! {
+                            #field_name.as_ref().map(|table| {
+                                table.#display_fun(
+                                    #display_param,
+                                    #context_param,
+                                )
+                            });
+                        }
                     }
                 });
                 quote! {
@@ -1408,14 +1467,25 @@ impl<'a> Disassembler<'a> {
                     let table_ptr = Rc::as_ptr(field.table());
                     let table = self.tables.get(&table_ptr).unwrap();
                     let disassembly = table.disassembly_name()?;
-                    Some(quote! {
-                        #name.#disassembly(
-                            &mut #context_current,
-                            #inst_start,
-                            #inst_next,
-                            #global_set_param,
-                        );
-                    })
+                    if field.always() {
+                        Some(quote! {
+                            #name.#disassembly(
+                                &mut #context_current,
+                                #inst_start,
+                                #inst_next,
+                                #global_set_param,
+                            );
+                        })
+                    } else {
+                        Some(quote! {
+                            #name.as_mut().map(|table| table.#disassembly(
+                                &mut #context_current,
+                                #inst_start,
+                                #inst_next,
+                                #global_set_param,
+                            ));
+                        })
+                    }
                 });
             quote! {
                 #(#disassembly_inner)*
