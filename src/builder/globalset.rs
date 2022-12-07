@@ -1,73 +1,89 @@
-use std::{collections::HashMap, rc::Rc};
+use std::collections::HashMap;
 
 use proc_macro2::{Ident, TokenStream};
+use quote::ToTokens;
 use quote::{format_ident, quote};
-use sleigh_rs::Varnode;
+use sleigh_rs::semantic::GlobalAnonReference;
+use sleigh_rs::semantic::GlobalElement;
 
 use super::formater::*;
 use super::WorkType;
 
 #[derive(Debug, Clone)]
-pub struct GlobalSetContext<'a> {
+pub struct GlobalSetContext {
     function: Ident,
-    sleigh: &'a sleigh_rs::Varnode,
+    _sleigh: GlobalAnonReference<sleigh_rs::Context>,
 }
-impl<'a> GlobalSetContext<'a> {
-    pub fn new(varnode: &'a sleigh_rs::Varnode) -> Self {
-        let function = format_ident!("set_{}", from_sleigh(&varnode.name));
+impl GlobalSetContext {
+    pub fn new(context: &GlobalElement<sleigh_rs::Context>) -> Self {
+        let function = format_ident!("set_{}", from_sleigh(context.name()));
         Self {
             function,
-            sleigh: varnode,
+            _sleigh: context.reference(),
         }
     }
     pub fn function(&self) -> &Ident {
         &self.function
     }
-    pub fn value_type(&self) -> WorkType {
-        WorkType::from_varnode(&self.sleigh)
-    }
-    pub fn generate(&self, addr_type: &WorkType) -> TokenStream {
-        let function = &self.function;
-        let value_type = self.value_type();
-        quote! {
-            fn #function(&mut self, address: Option<#addr_type>, value: #value_type);
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
-pub struct GlobalSetTrait<'a> {
+pub struct GlobalSetTrait {
     name: Ident,
-    varnodes: HashMap<*const sleigh_rs::Varnode, GlobalSetContext<'a>>,
+    varnodes: HashMap<*const sleigh_rs::Context, GlobalSetContext>,
+    addr_type: WorkType,
 }
 
-impl<'a> GlobalSetTrait<'a> {
-    pub fn new(sleigh: &'a sleigh_rs::Sleigh) -> Self {
+impl GlobalSetTrait {
+    pub fn new(sleigh: &sleigh_rs::Sleigh) -> Self {
         //TODO is a context in read-only memory valid?
         let name = format_ident!("GlobalSetTrait");
         let varnodes = sleigh
-            .varnodes()
-            .filter(|varnode| varnode.context().is_some())
-            .map(|varnode| {
-                (Rc::as_ptr(&varnode), GlobalSetContext::new(varnode))
+            .contexts()
+            .map(|context| {
+                (context.element_ptr(), GlobalSetContext::new(context))
             })
             .collect();
-        Self { name, varnodes }
+        let addr_type = WorkType::new_int_bytes(
+            sleigh.addr_len_bytes().get().try_into().unwrap(),
+            false,
+        );
+        Self {
+            name,
+            varnodes,
+            addr_type,
+        }
     }
     pub fn trait_name(&self) -> &Ident {
         &self.name
     }
-    pub fn context(&self, varnode: &Rc<Varnode>) -> &GlobalSetContext {
-        self.varnodes.get(&Rc::as_ptr(varnode)).unwrap()
+    pub fn context(
+        &self,
+        context: *const sleigh_rs::Context,
+    ) -> &GlobalSetContext {
+        self.varnodes.get(&context).unwrap()
     }
-    pub fn generate(&self, addr_type: &WorkType) -> TokenStream {
+}
+
+impl ToTokens for GlobalSetTrait {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
         let name = self.trait_name();
-        let functions =
-            self.varnodes.values().map(|var| var.generate(addr_type));
-        quote! {
+        let addr_type = &self.addr_type;
+        let functions = self.varnodes.values().map(|var| {
+            let function = &var.function;
+            let value_type = WorkType::int_type(true);
+            quote! {
+                fn #function(
+                    &mut self,
+                    address: Option<#addr_type>,
+                    value: #value_type,
+                );
+            }
+        });
+        tokens.extend(quote! {
             pub trait #name {
                 #(#functions)*
             }
-        }
+        })
     }
 }

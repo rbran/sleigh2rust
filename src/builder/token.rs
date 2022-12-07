@@ -1,199 +1,298 @@
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::rc::Rc;
 
 use proc_macro2::{Ident, TokenStream};
+use quote::ToTokens;
 use quote::{format_ident, quote};
-use sleigh_rs::Assembly;
-use sleigh_rs::NonZeroTypeU;
+use sleigh_rs::semantic::{GlobalAnonReference, GlobalElement};
+use sleigh_rs::{IntTypeU, NonZeroTypeU};
 
 use crate::builder::formater::*;
 use crate::builder::WorkType;
 
+use super::{
+    BitrangeFromMemory, BitrangeRW, DisplayElement, Meaning,
+    MeaningExecutionType, Meanings,
+};
+
 #[derive(Debug, Clone)]
-pub struct TokenField<'a> {
-    read_func: Ident,
-    sleigh: &'a sleigh_rs::Assembly,
+pub struct TokenFieldStruct {
+    pub struct_name: Ident,
+    inner_type: WorkType,
+    pub execution_type: MeaningExecutionType,
+    pub execution_fun: Ident,
+    pub disassembly_fun: Ident,
+    pub display_fun: Ident,
+    display: Rc<DisplayElement>,
+    meanings: Rc<Meanings>,
+    pub sleigh: GlobalAnonReference<sleigh_rs::TokenField>,
+}
+impl TokenFieldStruct {
+    pub fn new(
+        display: Rc<DisplayElement>,
+        meanings: Rc<Meanings>,
+        token_field: &GlobalElement<sleigh_rs::TokenField>,
+    ) -> Self {
+        let name = from_sleigh(&token_field.name());
+        let meaning = meanings.from_sleigh(token_field.meaning());
+        //TODO this calculation is done again in `BitrangeFromMemory` for
+        //`return_type`, deduplicate it
+        //how the token field will be stored on the struct, u8, u16, i16, etc...
+        let inner_type = WorkType::from_token_field(&token_field);
+        //this can be a value or register during the execution of it
+        let execution_type = meaning
+            .execution_type()
+            .unwrap_or(MeaningExecutionType::Value(inner_type));
+        Self {
+            execution_fun: format_ident!("execution"),
+            disassembly_fun: format_ident!("disassembly"),
+            display_fun: format_ident!("display"),
+            display,
+            sleigh: token_field.reference(),
+            struct_name: format_ident!("TokenField_{}", name),
+            inner_type,
+            meanings,
+            execution_type,
+        }
+    }
 }
 
-impl<'a> TokenField<'a> {
-    pub fn new(ass: &'a sleigh_rs::Assembly) -> Rc<Self> {
-        assert!(ass.field().is_some());
-        let name = format_ident!("{}", from_sleigh(&ass.name));
-        let sleigh = ass;
-        Rc::new(Self {
-            read_func: name,
+impl ToTokens for TokenFieldStruct {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let Self {
+            struct_name: type_name,
+            inner_type,
+            execution_type,
+            execution_fun,
+            disassembly_fun,
+            display_fun,
+            display,
+            meanings,
             sleigh,
-        })
-    }
-    pub fn read(&self) -> &Ident {
-        &self.read_func
-    }
-    pub fn return_type(&self) -> WorkType {
-        let field = self.sleigh.field().unwrap();
-        let len = field.bit_range.end - field.bit_range.start;
-        WorkType::unsigned_from_bits(len.try_into().unwrap())
+        } = self;
+        let disassembly_type = WorkType::int_type(true);
+        let display_type = display.name();
+        let sleigh_token_field = sleigh.element();
+        let sleigh_meaning = sleigh_token_field.meaning();
+        let meaning = meanings.from_sleigh(sleigh_meaning);
+        let execution_body = match &meaning {
+            Meaning::Literal(_) | Meaning::Names(_) => quote! { self.0 },
+            Meaning::Values(_, values) => {
+                let meaning_function = &values.value_func;
+                quote! {
+                    #meaning_function(self.0)
+                }
+            }
+            Meaning::Variables(vars) => {
+                let meaning_function = &vars.value_func;
+                quote! {
+                    #meaning_function(self.0)
+                }
+            }
+        };
+        let disassembly_body = match &meaning {
+            Meaning::Variables(_) | Meaning::Literal(_) | Meaning::Names(_) => {
+                quote! {
+                    #disassembly_type::try_from(self.0).unwrap()
+                }
+            }
+            Meaning::Values(_, _) => {
+                quote! {
+                    #disassembly_type::try_from(self.#execution_fun()).unwrap()
+                }
+            }
+        };
+        let display_body =
+            meanings.display_function_call(quote! {self.0}, sleigh_meaning);
+        tokens.extend(quote! {
+            #[derive(Clone, Copy, Debug)]
+            struct #type_name(#inner_type);
+            impl #type_name {
+                fn #execution_fun(&self) -> #execution_type {
+                    #execution_body
+                }
+                fn #disassembly_fun(&self) -> #disassembly_type {
+                    #disassembly_body
+                }
+                fn #display_fun(&self) -> #display_type {
+                    #display_body
+                }
+            }
+        });
     }
 }
 
+//TODO doc is outdated
 //Token parser will be based on len, any assembly field that is smaller then the
 //len of the token can be read.
 //eg: assembly `field_a` is part of the token `token_a`, that is 2bytes.
 //    assembly `field_b` is part of the token `token_b`, that is 4bytes.
 //It will be created a TokenParser for `token_a` and `token_b`,
-//`token_a` work_type will be a u16, and will only produce `field_a`.
-//`token_b` work_type will be a u32, and will produce both fields.
-pub fn gen_token_parsers<'a>(
-    sleigh: &'a sleigh_rs::Sleigh,
-) -> impl Iterator<Item = TokenParser> + 'a {
-    let token_lens: HashSet<NonZeroTypeU> =
-        sleigh.tokens().map(|token| token.size).collect();
-    token_lens
-        .into_iter()
-        .map(move |len| TokenParser::new(sleigh, len))
-}
+//`token_a` work_type will be a [u8; 2], and will only produce `field_a`.
+//`token_b` work_type will be a [u8; 4], and will produce both fields.
 #[derive(Debug, Clone)]
-pub struct TokenParser<'a> {
+pub struct TokenParser {
     //struct name
-    name: Ident,
+    pub name: Ident,
     //new function
     new_func: Ident,
-    //internal value len in bytes
-    token_bytes: NonZeroTypeU,
-    //assembly fields that this parser can produce
-    fields: HashMap<*const sleigh_rs::Assembly, Rc<TokenField<'a>>>,
+    bitrange_rw: Rc<BitrangeRW>,
+    ////len in bytes
+    //pub token_bytes: NonZeroTypeU,
+    //token_field that this parser can produce
+    fields:
+        HashMap<*const sleigh_rs::TokenField, (Ident, Rc<TokenFieldStruct>)>,
 }
-impl<'a> TokenParser<'a> {
+impl TokenParser {
     pub fn new(
-        sleigh: &'a sleigh_rs::Sleigh,
-        token_bits: NonZeroTypeU,
+        sleigh: &sleigh_rs::Sleigh,
+        display: &Rc<DisplayElement>,
+        meanings: &Rc<Meanings>,
+        bitrange_rw: &Rc<BitrangeRW>,
     ) -> Self {
-        //Tokens need to be multiple of 8, if not, this is an sleigh_rs
-        //logic/parsing error
-        assert!(token_bits.get() % 8 == 0);
-        assert!(token_bits.get() / 8 != 0);
         //list of fields that this token is able to produce
         let fields = sleigh
             .token_fields()
-            .filter(|ass| {
-                //only if this field is smaller then the token that we read
-                if let Some(field) = ass.field() {
-                    field.token.size <= token_bits
-                } else {
-                    false
-                }
-            })
             .map(|ass| {
-                let ptr = Rc::as_ptr(&ass);
-                let token = TokenField::new(&ass);
-                (ptr, token)
+                let ptr = ass.element_ptr();
+                let name = format_ident!("{}", from_sleigh(ass.name()));
+                let token = Rc::new(TokenFieldStruct::new(
+                    Rc::clone(display),
+                    Rc::clone(meanings),
+                    &ass,
+                ));
+                (ptr, (name, token))
             })
             .collect();
-        let name = format_ident!("TokenParser{}", token_bits.get());
-        let token_bytes = NonZeroTypeU::new(token_bits.get() / 8).unwrap();
         Self {
-            name,
+            name: format_ident!("TokenParser"),
+            bitrange_rw: Rc::clone(bitrange_rw),
             fields,
-            token_bytes,
             new_func: format_ident!("new"),
         }
     }
-    pub fn token_len(&self) -> NonZeroTypeU {
-        self.token_bytes
+    pub fn token_field_struct(
+        &self,
+        token_field: *const sleigh_rs::TokenField,
+    ) -> &Rc<TokenFieldStruct> {
+        self.fields.get(&token_field).map(|(_, x)| x).unwrap()
     }
     pub fn name(&self) -> &Ident {
         &self.name
     }
-    pub fn creator(&self) -> &Ident {
-        &self.new_func
-    }
-    pub fn field(&self, assembly: *const Assembly) -> &Rc<TokenField> {
-        self.fields.get(&assembly).as_ref().unwrap()
-    }
-    pub fn gen_read_call(
+    pub fn gen_new_call(
         &self,
-        token_parser_instance: &Ident,
-        ass: &'a Assembly,
-    ) -> (TokenStream, WorkType) {
-        let token_field = self.field(ass);
-        let token_type = token_field.return_type();
-        let token_read_name = token_field.read();
-        let call = quote! {
-            #token_parser_instance.#token_read_name()
-        };
-        (call, token_type)
-    }
-    pub fn gen_function(&self, token: &TokenField) -> TokenStream {
-        let name = &token.read_func;
-        let field = token.sleigh.field().unwrap();
-        let len = field.bit_range.end - field.bit_range.start;
-        let bit_start = field.bit_range.start;
-        let bit_mask = (1u128 << len) - 1;
-        let work_type = WorkType::unsigned_from_bytes(
-            self.token_bytes.get().try_into().unwrap(),
-        );
-        let work_len = work_type.len_bytes();
-        let read_bytes_start =
-            work_len - usize::try_from(self.token_bytes.get()).unwrap();
-        let return_type =
-            WorkType::from_bits(len.try_into().unwrap(), field.signed);
-        let from_xx_bytes = match &field.token.endian {
-            sleigh_rs::semantic::Endian::Little => quote! {from_le_bytes},
-            sleigh_rs::semantic::Endian::Big => quote! {from_be_bytes},
-        };
-        let value_endian = if read_bytes_start == 0 {
-            quote! {
-                #work_type::#from_xx_bytes(self.0)
-            }
-        } else {
-            quote! { {
-                let mut inner_raw = [0u8; #work_len];
-                inner_raw[#read_bytes_start..].copy_from_slice(self.0);
-                #work_type::#from_xx_bytes(inner_raw)
-            } }
-        };
-        let value = format_ident!("raw_value");
-        let solve_signed = if field.signed {
-            let unsigned_mask = bit_mask >> 1;
-            let sign_bit = unsigned_mask + 1;
-            quote! {
-                let unsigned = #value & #unsigned_mask as #work_type;
-                //unsigned we extend the value with zeros
-                //signed we extend the value with ones
-                if #value & #sign_bit as #work_type != 0 {
-                    (!#unsigned_mask as #work_type | unsigned) as #return_type
-                } else {
-                    unsigned as #return_type
-                }
-            }
-        } else {
-            quote! { #value as #return_type }
-        };
+        token_bytes: NonZeroTypeU,
+        data: impl ToTokens,
+    ) -> TokenStream {
+        let struct_name = &self.name;
+        let new_function = &self.new_func;
+        let token_bytes = usize::try_from(token_bytes.get()).unwrap();
         quote! {
-            pub fn #name(&self) -> #return_type {
-                let mut #value = #value_endian;
-                #value >>= #bit_start as #work_type;
-                #value &= #bit_mask as #work_type;
-                #solve_signed
-            }
+            <#struct_name<#token_bytes>>::#new_function(
+                #data
+            )
         }
     }
-    pub fn gen_struct_and_impl(&self) -> TokenStream {
+    pub fn gen_read(
+        &self,
+        token_parser_instance: impl ToTokens,
+        assembly: *const sleigh_rs::TokenField,
+    ) -> (TokenStream, &TokenFieldStruct) {
+        let (token_name, token_field) = self.fields.get(&assembly).unwrap();
+        let call = quote! {
+            #token_parser_instance.#token_name()
+        };
+        (call, token_field)
+    }
+    pub fn gen_disassembly_read_call(
+        &self,
+        token_parser_instance: impl ToTokens,
+        assembly: *const sleigh_rs::TokenField,
+    ) -> TokenStream {
+        let (call, token_field) =
+            self.gen_read(token_parser_instance, assembly);
+        let disassembly_read = &token_field.disassembly_fun;
+        quote! {
+            #call.#disassembly_read()
+        }
+    }
+    //pub fn gen_disassembly_read_call(
+    //    &self,
+    //    token_parser_instance: impl ToTokens,
+    //    assembly: *const sleigh_rs::TokenField,
+    //) -> TokenStream {
+    //    let token_field = self.fields.get(&assembly);
+    //    let token_field = token_field.as_ref().unwrap();
+    //    let token_read_name = token_field.read_disassembly();
+    //    let call = quote! {
+    //        #token_parser_instance.#token_read_name()
+    //    };
+    //    call
+    //}
+}
+
+impl<'a> ToTokens for TokenParser {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
         let name = &self.name;
         //NOTE internal value and read len are diferent, eg: token is 3 bytes
         //internal value could be a u32 (4bytes), but always value >= token
-        let token_bytes = usize::try_from(self.token_bytes.get()).unwrap();
-        let creator = self.creator();
-        let fields = self.fields.values().map(|x| self.gen_function(x));
-        //let from_bytes_function = if self.
-        quote! {
-            pub struct #name([u8; #token_bytes]);
-            impl #name {
-                pub fn #creator(data: &[u8]) -> Option<Self> {
-                    <[u8; #token_bytes]>::try_from(data).ok().map(Self)
+        let creator = &self.new_func;
+        let fields_structs = self.fields.values().map(|(_, x)| Rc::as_ref(x));
+        let fields = self.fields.values().map(|(name, token_field_struct)| {
+            let token_field_struct_name = &token_field_struct.struct_name;
+            let token_field = token_field_struct.sleigh.element();
+            let token = token_field.token();
+            let sleigh_rs::RangeBits { lsb_bit, n_bits } = token_field.range();
+            let bitrange_from_varnode = BitrangeFromMemory::new(
+                token.endian().is_big(),
+                Rc::clone(&self.bitrange_rw),
+                0,
+                token.len_bytes,
+                *lsb_bit,
+                *n_bits,
+                token_field.meaning().is_signed(),
+            );
+            //how to read this from the token
+            fn read(
+                work_value: &Ident,
+                read_bytes: NonZeroTypeU,
+                token_start: IntTypeU,
+                work_start: IntTypeU,
+            ) -> TokenStream {
+                let work_end = work_start + read_bytes.get();
+                let token_end = token_start + read_bytes.get();
+                quote! {
+                    let work_start = #work_start as usize;
+                    let work_end = #work_end as usize;
+                    let token_start = #token_start as usize;
+                    let token_end = #token_end as usize;
+                    #work_value[work_start..work_end]
+                        .copy_from_slice(&self.0[token_start..token_end]);
+                }
+            }
+            //generate the instructions that read this bitrange
+            let read_bitrange = bitrange_from_varnode.read_value(read);
+            quote! {
+                fn #name(&self) -> #token_field_struct_name {
+                    let inner_value = {
+                        #read_bitrange
+                    };
+                    #token_field_struct_name(inner_value)
+                }
+            }
+        });
+        tokens.extend(quote! {
+            #(#fields_structs)*
+            struct #name<const LEN: usize>([u8; LEN]);
+            impl<const LEN: usize> #name<LEN> {
+                fn #creator(data: &[u8]) -> Option<Self> {
+                    let token_slice: &[u8] = data.get(..LEN)?;
+                    let token_data = <[u8; LEN]>::try_from(token_slice).unwrap();
+                    Some(Self(token_data))
                 }
                 #(#fields)*
             }
-        }
+        })
     }
 }

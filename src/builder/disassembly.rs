@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use proc_macro2::TokenStream;
@@ -8,7 +7,8 @@ use sleigh_rs::semantic::disassembly::{
     Assertation, Assignment, Expr, ExprElement, GlobalSet, Op, OpUnary,
     ReadScope, Variable,
 };
-use sleigh_rs::Varnode;
+use sleigh_rs::semantic::GlobalAnonReference;
+use sleigh_rs::Context;
 
 fn disassembly_op(op: &Op) -> TokenStream {
     match op {
@@ -24,24 +24,24 @@ fn disassembly_op(op: &Op) -> TokenStream {
     }
 }
 pub trait DisassemblyGenerator<'a> {
-    fn global_set(&mut self, global_set: &'a GlobalSet) -> TokenStream;
-    fn value(&mut self, value: &'a ReadScope) -> TokenStream;
+    fn global_set(&self, global_set: &'a GlobalSet) -> TokenStream;
+    fn value(&self, value: &'a ReadScope) -> TokenStream;
     fn set_context(
-        &mut self,
-        context: &'a Varnode,
+        &self,
+        context: &GlobalAnonReference<Context>,
         value: TokenStream,
     ) -> TokenStream;
-    fn new_variable(&mut self, var: &'a Variable);
-    fn var_name(&mut self, var: &'a Variable) -> TokenStream;
-    fn op_unary(&mut self, op: &'a OpUnary) -> TokenStream {
+    fn new_variable(&self, var: &'a Rc<Variable>) -> TokenStream;
+    fn var_name(&self, var: &'a Variable) -> TokenStream;
+    fn op_unary(&self, op: &'a OpUnary) -> TokenStream {
         match op {
             OpUnary::Negation => quote! {!},
             OpUnary::Negative => quote! {-},
         }
     }
-    fn expr(&mut self, expr: &'a Expr) -> TokenStream {
+    fn expr(&self, expr: &'a Expr) -> TokenStream {
         let mut work_stack: Vec<_> = Vec::with_capacity(2);
-        for ele in expr.rpn.iter() {
+        for ele in expr.elements().iter() {
             //the rpn stack that result in a work_stack bigger then 2 is invalid
             match (ele, work_stack.len()) {
                 (ExprElement::Value(value), _) => {
@@ -68,38 +68,37 @@ pub trait DisassemblyGenerator<'a> {
         }
     }
     fn set_variable(
-        &mut self,
+        &self,
         var: &'a Variable,
         value: TokenStream,
     ) -> TokenStream {
         let var_name = self.var_name(var);
         quote! { #var_name = #value; }
     }
-    fn assignment(&mut self, ass: &'a Assignment) -> TokenStream {
+    fn assignment(&self, ass: &'a Assignment) -> TokenStream {
         use sleigh_rs::semantic::disassembly::WriteScope::*;
-        let value = self.expr(&ass.right);
-        match &ass.left {
-            Varnode(varnode) => self.set_context(varnode, value),
+        let value = self.expr(ass.right());
+        match ass.left() {
+            Context(context) => {
+                let context = context.clone().into();
+                self.set_context(&context, value)
+            }
             Local(variable) => self.set_variable(variable, value),
         }
     }
     fn disassembly(
-        &mut self,
-        vars: &'a HashMap<Rc<str>, Rc<Variable>>,
-        assertations: &'a Vec<Assertation>,
+        &self,
+        vars: &'a [Rc<Variable>],
+        assertations: &'a [Assertation],
     ) -> TokenStream {
-        for var in vars.values() {
-            self.new_variable(var)
-        }
-        assertations
-            .iter()
-            .map(|ass| {
-                use sleigh_rs::semantic::disassembly::Assertation::*;
-                match ass {
-                    GlobalSet(global) => self.global_set(global),
-                    Assignment(ass) => self.assignment(ass),
-                }
-            })
-            .collect()
+        let vars_iter = vars.iter().map(|var| self.new_variable(var));
+        let assertations_iter = assertations.iter().map(|ass| {
+            use sleigh_rs::semantic::disassembly::Assertation::*;
+            match ass {
+                GlobalSet(global) => self.global_set(global),
+                Assignment(ass) => self.assignment(ass),
+            }
+        });
+        vars_iter.chain(assertations_iter).collect()
     }
 }

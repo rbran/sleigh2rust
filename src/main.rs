@@ -1,7 +1,9 @@
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+use std::rc::Rc;
 
+use quote::ToTokens;
 use sleigh2rust;
 
 const ARCH_FILES: &[(&str, &[&str])] = &[
@@ -261,11 +263,10 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         ],
     ),
     ("DATA", &["data-be-64", "data-le-64"]),
+    ("SuperH4", &["SuperH4_be", "SuperH4_le"]),
     (
-        "SuperH4",
+        "SuperH",
         &[
-            "SuperH4_be",
-            "SuperH4_le",
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
             //"sh-1",
@@ -318,6 +319,7 @@ fn parse(arch: &str, variant: &str) -> Result<(), Box<dyn std::error::Error>> {
         arch, variant
     );
     let sleigh = sleigh_rs::file_to_sleigh(&in_file_name)?;
+    let sleigh = Rc::new(sleigh);
 
     let out_file_path = Path::new("/home/rbran/src/sleigh3rust")
         .join(variant.to_lowercase().replace('-', "_"))
@@ -325,8 +327,8 @@ fn parse(arch: &str, variant: &str) -> Result<(), Box<dyn std::error::Error>> {
     let out_file_name = out_file_path.join("disassembler.rs");
 
     let mut file = File::create(&out_file_name)?;
-    let emu = sleigh2rust::dis(&sleigh);
-    file.write_all(emu.to_string().as_bytes())?;
+    let emu = sleigh2rust::dis(sleigh);
+    file.write_all(emu.into_token_stream().to_string().as_bytes())?;
     drop(file);
 
     let fmt_success = std::process::Command::new("rustfmt")

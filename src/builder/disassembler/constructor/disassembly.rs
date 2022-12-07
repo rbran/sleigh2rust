@@ -1,286 +1,331 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use sleigh_rs::semantic::disassembly::{GlobalSet, Variable};
-use sleigh_rs::{Assembly, IntTypeS, Varnode};
+use sleigh_rs::semantic::{
+    GlobalAnonReference, GlobalElement, GlobalReference,
+};
 
 use crate::builder::formater::from_sleigh;
-use crate::builder::{ContextTrait, DisassemblyGenerator, WorkType};
+use crate::builder::{Disassembler, DisassemblyGenerator, WorkType};
 
-use super::{Constructor, ParsedField};
+use super::{ConstructorStruct, ParsedField};
 
-pub struct DisassemblyConstructor<'a, 'b> {
-    context_trait: &'b ContextTrait<'a>,
-    global_set: &'b crate::builder::GlobalSetTrait<'a>,
-
-    inst_start: &'b Ident,
-    inst_next: &'b Ident,
-    inst_work_type: &'b WorkType,
-    global_set_param: &'b Ident,
-    context_param: &'b Ident,
-
-    //things that need to be done before the disassembly
-    build_pre_disassembly: Vec<TokenStream>,
-    //things that need to be done after the disassembly
-    build_pos_disassembly: Vec<TokenStream>,
-
-    //vars that where declared outside the disassembly and can be used without
-    //declaration
-    deref_ass: bool,
-    deref_var: bool,
-    constructor: &'b Constructor<'a>,
-
-    //variables created during the execution of this disassembly
-    calc_fields: &'b HashMap<*const Variable, ParsedField<&'a Variable>>,
-    ass_vars: &'b HashMap<*const Assembly, Ident>,
-    existing_var: HashMap<*const Variable, ParsedField<&'a Variable>>,
-    context_vars: HashMap<*const Varnode, (Ident, WorkType, &'a Varnode)>,
+pub struct DisassemblyDisplay<'a> {
+    pub constructor: &'a ConstructorStruct,
+    pub display_param: &'a Ident,
+    pub context_param: &'a Ident,
+    pub inst_start: &'a Ident,
+    pub inst_next: &'a Ident,
+    pub global_set_param: &'a Ident,
+    pub vars: RefCell<HashMap<*const Variable, ParsedField<Rc<Variable>>>>,
 }
 
-impl<'a, 'b> DisassemblyConstructor<'a, 'b> {
-    pub fn disassembly(
-        context_trait: &'b ContextTrait<'a>,
-        global_set: &'b crate::builder::GlobalSetTrait<'a>,
-
-        inst_start: &'b Ident,
-        inst_next: &'b Ident,
-        inst_work_type: &'b WorkType,
-        global_set_param: &'b Ident,
-        context_param: &'b Ident,
-
-        deref_ass: bool,
-        deref_var: bool,
-        constructor: &'b Constructor<'a>,
-
-        calc_fields: &'b HashMap<*const Variable, ParsedField<&'a Variable>>,
-        ass_vars: &'b HashMap<*const Assembly, Ident>,
-        disassembly: &'a sleigh_rs::Disassembly,
-    ) -> TokenStream {
-        let mut helper = Self {
-            context_trait,
-            global_set,
-
-            inst_start,
-            inst_next,
-            inst_work_type,
-            global_set_param,
-            context_param,
-
-            //things that need to be done before the disassembly
-            build_pre_disassembly: vec![],
-            //things that need to be done after the disassembly
-            build_pos_disassembly: vec![],
-
-            deref_ass,
-            deref_var,
-            constructor,
-            ass_vars,
-
-            calc_fields,
-            context_vars: HashMap::new(),
-            existing_var: HashMap::new(),
-        };
-        helper.generate(disassembly)
+impl<'a> DisassemblyDisplay<'a> {
+    fn inst_start(&self) -> TokenStream {
+        let inst_start = &self.inst_start;
+        let int_type = WorkType::int_type(true);
+        quote! {#int_type::try_from(#inst_start).unwrap()}
     }
-
-    pub fn generate(
-        &mut self,
-        disassembly: &'a sleigh_rs::Disassembly,
-    ) -> TokenStream {
-        let disassembly =
-            self.disassembly(&disassembly.vars, &disassembly.assertations);
-
-        let pre_build_disassembly =
-            std::mem::take(&mut self.build_pre_disassembly);
-        let pos_build_disassembly =
-            std::mem::take(&mut self.build_pos_disassembly);
-        quote! {
-            #(#pre_build_disassembly)*
-            #disassembly
-            #(#pos_build_disassembly)*
-        }
+    fn inst_next(&self) -> TokenStream {
+        let inst_next = &self.inst_next;
+        let int_type = WorkType::int_type(true);
+        quote! {#int_type::try_from(#inst_next).unwrap()}
     }
     //get var name on that contains the this assembly field value
     fn ass_field(
-        &mut self,
-        ass: &'a sleigh_rs::Assembly,
-    ) -> (TokenStream, WorkType) {
-        match &ass.assembly_type {
-            sleigh_rs::semantic::assembly::AssemblyType::Epsilon => {
-                unreachable!("epsilon field?")
-            }
-            sleigh_rs::semantic::assembly::AssemblyType::Start(_) => {
-                let inst_start = &self.inst_start;
-                (quote! {#inst_start}, *self.inst_work_type)
-            }
-            sleigh_rs::semantic::assembly::AssemblyType::Next(_) => {
-                let inst_next = &self.inst_next;
-                (quote! {#inst_next}, *self.inst_work_type)
-            }
-            sleigh_rs::semantic::assembly::AssemblyType::Field(_) => {
-                //can't create new ass fields during disassembly, all
-                //fields used need to be declared on the pattern
-                let ptr: *const sleigh_rs::Assembly = ass;
-                let field_name = self.ass_vars.get(&ptr).unwrap();
-                let deref = self.deref_ass.then(|| quote! {*});
-                let return_type = WorkType::from_ass(ass);
-                (quote! {#deref #field_name}, return_type)
-            }
-        }
+        &self,
+        ass: &GlobalReference<sleigh_rs::TokenField>,
+    ) -> TokenStream {
+        //can't create new ass fields during disassembly, all
+        //fields used need to be declared on the pattern
+        let field =
+            self.constructor.ass_fields.get(&ass.element_ptr()).unwrap();
+        let name = &field.name;
+        let disassembly_fun = &field.token_field_struct.disassembly_fun;
+        quote! {self.#name.#disassembly_fun()}
     }
     //get var name on that contains the this context value
-    fn context_field(&mut self, varnode: &'a Varnode) -> (&Ident, &WorkType) {
-        let ptr: *const Varnode = varnode;
-        //if the variable exists, return it
-        if self.context_vars.contains_key(&ptr) {
-            let (ident, context_type, _) = self.context_vars.get(&ptr).unwrap();
-            return (ident, context_type);
-        }
+    fn context_field(&self, context: &sleigh_rs::Context) -> TokenStream {
         //otherwise create it
-        let context = self.context_trait.varnode(ptr);
-        let context_func = context.read();
-        let context_name = format_ident!("{}", from_sleigh(&varnode.name));
-        let context_param = &self.context_param;
-        let context_type = *context.return_type();
-
-        self.build_pre_disassembly.push(quote! {
-            let mut #context_name = #context_param.#context_func();
-        });
-        self.context_vars
-            .insert(ptr, (context_name, context_type, varnode))
-            .map(|_| unreachable!());
-        let (ident, context_type, _) = self.context_vars.get(&ptr).unwrap();
-        (ident, context_type)
+        let disassembler = self.constructor.disassembler.upgrade().unwrap();
+        disassembler
+            .memory
+            .spaces_trait
+            .build_context_disassembly_read_call(&self.context_param, &context)
     }
     //get var name on that contains the this assembly field value
     fn table_field(
-        &mut self,
-        table: &'a sleigh_rs::Table,
-    ) -> Option<(TokenStream, WorkType)> {
-        let ptr: *const _ = table;
-        let field = self.constructor.table_fields.get(&ptr).unwrap();
-        let field_name = field.name();
+        &self,
+        table: &GlobalElement<sleigh_rs::Table>,
+    ) -> Option<TokenStream> {
+        let field = self
+            .constructor
+            .table_fields
+            .get(&table.element_ptr())
+            .unwrap();
+        let field_name = &field.name;
+        let disassembler = self.constructor.disassembler.upgrade().unwrap();
+        let addr_type = &disassembler.inst_work_type;
         use sleigh_rs::semantic::table::ExecutionExport;
-        let export_len = match table.export {
-            ExecutionExport::Const(len) => len.get().try_into().unwrap(),
+        match table.export {
+            ExecutionExport::Const(len) => {
+                //TODO allow table to export value with addr diff from addr_len
+                //and auto convert using try_from?
+                assert_eq!(len, addr_type.len_bytes())
+            }
             ExecutionExport::None
             | ExecutionExport::Value(_)
             | ExecutionExport::Reference(_)
             | ExecutionExport::Multiple(_) => return None,
-        };
-        let export_type = WorkType::from_bytes(export_len, false);
-        Some((quote! {*self.#field_name}, export_type))
+        }
+        Some(quote! {self.#field_name})
     }
 }
 
-impl<'a, 'b> DisassemblyGenerator<'a> for DisassemblyConstructor<'a, 'b> {
-    fn global_set(&mut self, global_set: &'a GlobalSet) -> TokenStream {
-        let context = self.global_set.context(&global_set.context);
-        let addr_type = self.inst_work_type;
+impl<'a> ToTokens for DisassemblyDisplay<'a> {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        tokens.extend(self.disassembly(
+            &self.constructor.sleigh.disassembly.vars,
+            &self.constructor.sleigh.disassembly.assertations,
+        ));
+    }
+}
+
+impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
+    fn global_set(&self, global_set: &'b GlobalSet) -> TokenStream {
+        let sleigh_context = global_set.context().element();
+        let disassembler = self.constructor.disassembler.upgrade().unwrap();
+        let context = disassembler.global_set.context(sleigh_context.element());
+        let addr_type = &disassembler.inst_work_type;
         use sleigh_rs::semantic::disassembly::AddrScope::*;
         let address = match &global_set.address {
-            Int(value) => quote! {(#value as #addr_type)},
-            Varnode(varnode) => {
-                let (name, _var_type) = self.context_field(varnode);
+            Integer(value) => quote! {(#value as #addr_type)},
+            Varnode(_varnode) => {
                 //TODO solve IntTypeS instead of i64
-                quote! { Some(#addr_type::try_from(#name).unwrap()) }
-            }
-            Assembly(ass) => {
-                let (name, _ass_type) = self.ass_field(ass);
-                quote! { Some(#addr_type::try_from(#name).unwrap()) }
+                quote! { None }
             }
             Local(var) => {
                 let name = self.var_name(var);
                 quote! { Some(#addr_type::try_from(#name).unwrap()) }
             }
             Table(table) => {
-                if let Some((value, value_type)) = self.table_field(table) {
-                    assert_eq!(addr_type.len_bytes(), value_type.len_bytes());
-                    quote! { Some(#value) }
-                } else {
-                    quote! { None }
-                }
+                let table = table.element();
+                self.table_field(&table)
+                    .map(|table| quote! {Some(#table)})
+                    .unwrap_or(quote! {None})
+            }
+            InstNext(_) => {
+                let name = self.inst_next;
+                quote! { Some(#name) }
             }
         };
         let set_function = context.function();
-        let value_type = context.value_type();
         let global_set_param = self.global_set_param;
-        let (value, _value_type) = self.context_field(&global_set.context);
+        let value = self.context_field(&sleigh_context);
         quote! {
-            #global_set_param.#set_function(
-                #address,
-                #value_type::try_into(#value).unwrap()
-            );
+            #global_set_param.#set_function(#address, #value);
         }
     }
+
     fn value(
-        &mut self,
-        value: &'a sleigh_rs::semantic::disassembly::ReadScope,
+        &self,
+        value: &'b sleigh_rs::semantic::disassembly::ReadScope,
     ) -> TokenStream {
         use sleigh_rs::semantic::disassembly::ReadScope;
         match value {
             ReadScope::Integer(value) => quote! {(#value as i64)},
-            ReadScope::Varnode(varnode) => {
-                let (name, _var_type) = self.context_field(varnode);
-                //TODO solve IntTypeS instead of i64
-                quote! { i64::try_from(#name).unwrap() }
+            ReadScope::Context(varnode) => {
+                let sleigh_context = varnode.element();
+                self.context_field(&sleigh_context).to_token_stream()
             }
-            ReadScope::Assembly(ass) => {
-                let (name, _ass_type) = self.ass_field(ass);
-                //TODO solve IntTypeS instead of i64
-                quote! { i64::try_from(#name).unwrap() }
-            }
+            ReadScope::TokenField(ass) => self.ass_field(ass),
             ReadScope::Local(var) => self.var_name(var),
+            ReadScope::InstStart(_) => self.inst_start().to_token_stream(),
+            ReadScope::InstNext(_) => self.inst_next().to_token_stream(),
         }
     }
 
     fn set_context(
-        &mut self,
-        varnode: &'a sleigh_rs::Varnode,
+        &self,
+        _context: &GlobalAnonReference<sleigh_rs::Context>,
+        _value: TokenStream,
+    ) -> TokenStream {
+        //TODO what if we modify the context and the result is used in the
+        //global_set? check for that and find solutions!
+        //for now, we just ignore context writes
+        quote! {}
+    }
+
+    fn new_variable(&self, var: &'b Rc<Variable>) -> TokenStream {
+        let mut vars = self.vars.borrow_mut();
+        let ptr: *const Variable = Rc::as_ptr(var);
+        let var_name = format_ident!("{}", from_sleigh(var.name()));
+        match vars.entry(ptr) {
+            std::collections::hash_map::Entry::Occupied(_) => {
+                unreachable!("Variable duplicated")
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let entry =
+                    entry.insert(ParsedField::new(var_name, Rc::clone(var)));
+                let name = &entry.name;
+                let work_type = WorkType::int_type(true);
+                quote! {let mut #name: #work_type = 0;}
+            }
+        }
+    }
+
+    fn var_name(&self, var: &'b Variable) -> TokenStream {
+        let ptr: *const Variable = var;
+        let vars = self.vars.borrow_mut();
+        let var = vars.get(&ptr).unwrap();
+        var.name().to_token_stream()
+    }
+}
+
+pub struct DisassemblyPattern<'a> {
+    pub disassembler: &'a Disassembler,
+    pub token_parser: Option<&'a Ident>,
+    pub context_param: &'a Ident,
+    pub inst_start: &'a Ident,
+    pub root_tables: &'a HashMap<*const sleigh_rs::Table, Ident>,
+    pub root_token_fields: &'a HashMap<*const sleigh_rs::TokenField, Ident>,
+    pub vars: RefCell<HashMap<*const Variable, ParsedField<Rc<Variable>>>>,
+}
+
+impl<'a> DisassemblyPattern<'a> {
+    fn inst_start(&self) -> TokenStream {
+        let inst_start = &self.inst_start;
+        let int_type = WorkType::int_type(true);
+        quote! {#int_type::try_from(#inst_start).unwrap()}
+    }
+    //get var name on that contains the this assembly field value
+    fn ass_field(
+        &self,
+        ass: &GlobalReference<sleigh_rs::TokenField>,
+    ) -> TokenStream {
+        self.disassembler.token_parser.gen_disassembly_read_call(
+            self.token_parser.as_ref().unwrap(),
+            ass.element_ptr(),
+        )
+    }
+    //get var name on that contains the this context value
+    fn context_field(&self, context: &sleigh_rs::Context) -> TokenStream {
+        //otherwise create it
+        self.disassembler
+            .memory
+            .spaces_trait
+            .build_context_disassembly_read_call(&self.context_param, &context)
+    }
+    fn can_execute(
+        &self,
+        expr: &sleigh_rs::semantic::disassembly::Expr,
+    ) -> bool {
+        use sleigh_rs::semantic::disassembly::ExprElement::*;
+        use sleigh_rs::semantic::disassembly::ReadScope::*;
+        expr.elements().iter().all(|element| match element {
+            Op(_) | OpUnary(_) => true,
+            Value(value) => match value {
+                Integer(_) | Context(_) | InstStart(_) | Local(_)
+                | TokenField(_) => true,
+                InstNext(_) => false,
+            },
+        })
+    }
+}
+
+impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyPattern<'a> {
+    //TODO identify disassembly that can't be executed separated between pre/pos
+    fn disassembly(
+        &self,
+        vars: &'b [Rc<Variable>],
+        assertations: &'b [sleigh_rs::semantic::disassembly::Assertation],
+    ) -> TokenStream {
+        let mut tokens = TokenStream::new();
+        tokens.extend(vars.iter().map(|var| self.new_variable(var)));
+        for ass in assertations {
+            use sleigh_rs::semantic::disassembly::Assertation::*;
+            match ass {
+                GlobalSet(_) => (),
+                Assignment(ass) => {
+                    if !self.can_execute(ass.right()) {
+                        break;
+                    }
+                    tokens.extend(self.assignment(ass));
+                }
+            }
+        }
+        tokens
+    }
+    fn global_set(&self, _global_set: &'b GlobalSet) -> TokenStream {
+        //global set is not done yet, only in display
+        unreachable!()
+    }
+
+    fn value(
+        &self,
+        value: &'b sleigh_rs::semantic::disassembly::ReadScope,
+    ) -> TokenStream {
+        use sleigh_rs::semantic::disassembly::ReadScope;
+        match value {
+            ReadScope::Integer(value) => quote! {(#value as i64)},
+            ReadScope::Context(varnode) => {
+                let sleigh_context = varnode.element();
+                self.context_field(&sleigh_context).to_token_stream()
+            }
+            ReadScope::TokenField(ass) => self.ass_field(ass),
+            ReadScope::Local(var) => self.var_name(var),
+            ReadScope::InstStart(_) => self.inst_start().to_token_stream(),
+            ReadScope::InstNext(_) => unreachable!(),
+        }
+    }
+
+    fn set_context(
+        &self,
+        context: &GlobalAnonReference<sleigh_rs::Context>,
         value: TokenStream,
     ) -> TokenStream {
-        let context_write_func =
-            self.context_trait.varnode(varnode).write().unwrap();
-        let context_param = self.context_param;
-        //this context variable need to be written back into the context trait
-        //after the disassembly is finished
-        let (name, context_type) = self.context_field(varnode);
-        let (name, context_type) = (name.clone(), *context_type);
-        self.build_pos_disassembly.push(quote! {
-            #context_param.#context_write_func(#name);
-        });
-        //update the variable during the disassembly
-        quote! { #name = #context_type::try_from(#value).unwrap(); }
-    }
-
-    fn new_variable(&mut self, var: &'a Variable) {
-        let ptr: *const Variable = var;
-        //if this variable is already declare, does nothing
-        if self.calc_fields.contains_key(&ptr) {
-            return;
+        let tmp_value = format_ident!("tmp");
+        let write = self
+            .disassembler
+            .memory
+            .spaces_trait
+            .build_context_disassembly_write_call(
+                &self.context_param,
+                &context.element(),
+                &tmp_value,
+            );
+        quote! {
+            let #tmp_value = #value;
+            #write;
         }
-        let var_name = format_ident!("{}", from_sleigh(var.name.as_ref()));
-        let zero: IntTypeS = 0;
-        //variable used used during the disassembly, initialized it with zero
-        self.build_pre_disassembly.push(quote! {
-            let mut #var_name = #zero;
-        });
-        self.existing_var
-            .insert(ptr, ParsedField::new(var_name, var))
-            .map(|_| unreachable!("Variable duplicated"));
     }
 
-    fn var_name(&mut self, var: &Variable) -> TokenStream {
+    fn new_variable(&self, var: &'b Rc<Variable>) -> TokenStream {
+        let mut vars = self.vars.borrow_mut();
+        let ptr: *const Variable = Rc::as_ptr(var);
+        let var_name = format_ident!("{}", from_sleigh(var.name()));
+        match vars.entry(ptr) {
+            std::collections::hash_map::Entry::Occupied(_) => {
+                unreachable!("Variable duplicated")
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let entry =
+                    entry.insert(ParsedField::new(var_name, Rc::clone(var)));
+                let name = &entry.name;
+                let work_type = WorkType::int_type(true);
+                quote! {let mut #name: #work_type = 0;}
+            }
+        }
+    }
+
+    fn var_name(&self, var: &'b Variable) -> TokenStream {
         let ptr: *const Variable = var;
-        self.existing_var
-            .get(&ptr)
-            .map(|field| field.name().to_token_stream())
-            .or_else(|| {
-                let name = self.calc_fields.get(&ptr).map(ParsedField::name)?;
-                let deref = self.deref_var.then(|| quote! {*});
-                Some(quote! {#deref #name})
-            })
-            .unwrap()
+        let vars = self.vars.borrow_mut();
+        let var = vars.get(&ptr).unwrap();
+        var.name().to_token_stream()
     }
 }

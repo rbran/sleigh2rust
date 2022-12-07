@@ -1,46 +1,34 @@
 use std::collections::HashSet;
-use std::rc::Rc;
 
 use proc_macro2::{Ident, TokenStream};
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, ToTokens};
+
+use sleigh_rs::semantic::GlobalElement;
 use sleigh_rs::Varnode;
 
 use super::formater::*;
 
 #[derive(Clone, Debug)]
-pub struct RegistersEnum<'a> {
+pub struct RegistersEnum {
     name: Ident,
-    registers: Vec<(Ident, &'a Varnode)>,
+    registers: Box<[(Ident, GlobalElement<sleigh_rs::Varnode>)]>,
 }
 
-impl<'a> RegistersEnum<'a> {
-    pub fn new_empty(name: Ident) -> Self {
-        Self {
-            name,
-            registers: Vec::new(),
-        }
-    }
-    pub fn from_all(name: Ident, sleigh: &'a sleigh_rs::Sleigh) -> Self {
-        let iter = sleigh.varnodes().map(|x| x.as_ref());
-        Self::from_iterator(name, iter)
-    }
-    pub fn from_context(name: Ident, sleigh: &'a sleigh_rs::Sleigh) -> Self {
-        let iter = sleigh
-            .varnodes()
-            .filter(|varnode| varnode.context().is_some())
-            .map(|x| x.as_ref());
+impl RegistersEnum {
+    pub fn from_all(name: Ident, sleigh: &sleigh_rs::Sleigh) -> Self {
+        let iter = sleigh.varnodes().cloned();
         Self::from_iterator(name, iter)
     }
 
     //enum from only the Registers that can be printed
-    pub fn from_printable(name: Ident, sleigh: &'a sleigh_rs::Sleigh) -> Self {
+    pub fn from_printable(name: Ident, sleigh: &sleigh_rs::Sleigh) -> Self {
         let mut iter_vec = Vec::new();
         let mut iter_set = HashSet::new();
         let iter_vec_ptr: *mut Vec<_> = &mut iter_vec;
         let iter_set_ptr: *mut HashSet<_> = &mut iter_set;
 
-        let add_reg = |reg: &'a sleigh_rs::Varnode| {
-            let ptr: *const _ = reg;
+        let add_reg = |reg: GlobalElement<sleigh_rs::Varnode>| {
+            let ptr: *const _ = reg.element_ptr();
             //iter_vec/iter_set is only used here, so this is fine
             unsafe {
                 if !(*iter_set_ptr).contains(&ptr) {
@@ -49,60 +37,28 @@ impl<'a> RegistersEnum<'a> {
                 }
             }
         };
-        let add_attach = |attach: &std::cell::RefCell<
-            Option<Rc<sleigh_rs::semantic::Meaning>>,
-        >|
-         -> bool {
-            let attach = attach.borrow();
-            let attach = if let Some(attach) = attach.as_ref() {
-                attach
-            } else {
-                return false;
-            };
-            let mut added = false;
-            if let sleigh_rs::semantic::Meaning::Variable { size: _, vars } =
-                attach.as_ref()
-            {
-                vars.iter().filter_map(|x| x.as_ref()).for_each(|var| {
-                    added |= true;
-                    let var = sleigh
-                        .global_scope
-                        .get(&var.name)
-                        .unwrap()
-                        .unwrap_varnode()
-                        .unwrap();
-                    add_reg(var)
-                })
+        let add_attach = |meaning: &sleigh_rs::Meaning| match meaning {
+            sleigh_rs::Meaning::Variable(variables) => {
+                variables.iter().for_each(|(_i, v)| add_reg(v.element()))
             }
-            added
+            sleigh_rs::Meaning::Literal(_)
+            | sleigh_rs::Meaning::Name(_)
+            | sleigh_rs::Meaning::Value(_, _) => (),
         };
         for table in sleigh.tables() {
             for constructor in table.constructors.iter() {
                 for element in constructor.display.elements().iter() {
-                    use sleigh_rs::semantic::assembly::AssemblyType::*;
-                    use sleigh_rs::semantic::display::Element::*;
-                    use sleigh_rs::semantic::varnode::VarnodeType::*;
+                    use sleigh_rs::semantic::display::DisplayScope::*;
                     match element {
-                        Varnode(varnode) => match &varnode.varnode_type {
-                            Context(
-                                sleigh_rs::semantic::varnode::Context {
-                                    attach,
-                                    ..
-                                },
-                            ) => {
-                                if !add_attach(attach) {
-                                    add_reg(varnode)
-                                }
-                            }
-                            Memory(_) | BitRange(_) => add_reg(varnode),
-                        },
-                        Assembly(ass) => match &ass.assembly_type {
-                            Field(field) => {
-                                add_attach(&field.attach);
-                            }
-                            Epsilon | Start(_) | Next(_) => (),
-                        },
-                        Disassembly(_) | Table(_) | Literal(_) => (),
+                        Varnode(var) => add_reg(var.element()),
+                        Context(context) => {
+                            add_attach(context.element().meaning())
+                        }
+                        TokenField(token_field) => {
+                            add_attach(token_field.element().meaning())
+                        }
+                        InstStart(_) | InstNext(_)
+                        | Disassembly(_) | Table(_) | Literal(_) => (),
                     }
                 }
             }
@@ -113,12 +69,11 @@ impl<'a> RegistersEnum<'a> {
 
     pub fn from_iterator(
         name: Ident,
-        registers: impl Iterator<Item = &'a Varnode> + 'a,
+        registers: impl Iterator<Item = GlobalElement<sleigh_rs::Varnode>>,
     ) -> Self {
         let registers = registers
             .map(|register| {
-                let name =
-                    format_ident!("{}", from_sleigh(register.name.as_ref()));
+                let name = format_ident!("{}", from_sleigh(register.name()));
                 (name, register)
             })
             .collect();
@@ -127,41 +82,37 @@ impl<'a> RegistersEnum<'a> {
     pub fn name(&self) -> &Ident {
         &self.name
     }
-    pub fn registers(&self) -> impl Iterator<Item = &(Ident, &'a Varnode)> {
+    pub fn registers<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = &(Ident, GlobalElement<sleigh_rs::Varnode>)> + 'a
+    {
         self.registers.iter()
     }
-    pub fn register(
-        &self,
-        register: &'a Varnode,
-    ) -> Option<&(Ident, &'a Varnode)> {
-        let ptr: *const Varnode = register;
+    pub fn register(&self, register_ptr: *const Varnode) -> Option<&Ident> {
         self.registers()
-            .find(|(_name, register)| *register as *const Varnode == ptr)
+            .find(|(_name, register)| register.element_ptr() == register_ptr)
+            .map(|(name, _register)| name)
     }
-    pub fn generate(&self) -> TokenStream {
+}
+
+impl ToTokens for RegistersEnum {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
         let name = self.name();
-        let elements = self.registers().map(|(name, _reg)| {
-            quote! { #name, }
-        });
-        quote! {
+        let elements_names = self.registers().map(|(name, _reg)| name);
+        let elements_names2 = self.registers().map(|(name, _reg)| name);
+        let elements_display = self.registers().map(|(_name, reg)| reg.name());
+        tokens.extend(quote! {
             #[derive(Clone, Copy, Debug)]
             pub enum #name {
-                #(#elements)*
+                #(#elements_names),*
             }
-        }
-    }
-    pub fn generate_impl_display(&self) -> TokenStream {
-        let name = self.name();
-        let elements = self.registers().map(|(name, _reg)| name);
-        let elements_display = self.registers().map(|(_name, reg)| &reg.name);
-        quote! {
             impl core::fmt::Display for #name {
                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {
                     match self {
-                        #(Self::#elements => write!(f, #elements_display),)*
+                        #(Self::#elements_names2 => write!(f, #elements_display),)*
                     }
                 }
             }
-        }
+        })
     }
 }

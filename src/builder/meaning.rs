@@ -1,129 +1,427 @@
+use std::collections::HashMap;
 use std::rc::Rc;
 
-use proc_macro2::{Ident, TokenStream};
-use quote::{format_ident, quote};
-use sleigh_rs::IntTypeS;
+use proc_macro2::{Ident, Literal, TokenStream};
+use quote::{format_ident, quote, ToTokens};
+use sleigh_rs::semantic::{GlobalReference, PrintBase, PrintFmt};
+use sleigh_rs::{IntTypeS, NonZeroTypeU};
 
-use super::{DisplayElement, RegistersEnum};
+use super::{DisplayElement, RegistersEnum, WorkType};
 
+type VarMeaningSleigh = [(usize, GlobalReference<sleigh_rs::Varnode>)];
 #[derive(Debug, Clone)]
-pub struct Meaning<'a> {
-    name: Ident,
-    //TODO remove this Rc by removing RefCell from the final values in sleigh_rs
-    sleigh: Rc<sleigh_rs::semantic::Meaning>,
-    registers: Rc<RegistersEnum<'a>>,
+pub struct VarMeaning {
+    sleigh: Rc<VarMeaningSleigh>,
     display: Rc<DisplayElement>,
+    registers: Rc<RegistersEnum>,
+    pub display_func: Ident,
+    pub value_func: Ident,
+    pub index_type: WorkType,
+    pub varnode_bytes: NonZeroTypeU,
+}
+impl VarMeaning {
+    pub fn new(
+        sleigh: Rc<VarMeaningSleigh>,
+        display: Rc<DisplayElement>,
+        registers: Rc<RegistersEnum>,
+        fun_count: usize,
+    ) -> Self {
+        let index_max =
+            sleigh.iter().map(|(index, _varnode)| *index).max().unwrap();
+        let index_bits = (usize::BITS - index_max.leading_zeros()) + 1;
+        let index_type = WorkType::new_int_bits(
+            NonZeroTypeU::new(index_bits.into()).unwrap(),
+            false,
+        );
+        let varnode_bytes = sleigh
+            .first()
+            .map(|(_index, varnode)| varnode.element().len_bytes())
+            .unwrap();
+        Self {
+            sleigh,
+            display,
+            registers,
+            display_func: format_ident!("meaning_{}_display", fun_count),
+            value_func: format_ident!("meaning_{}_value", fun_count),
+            index_type,
+            varnode_bytes,
+        }
+    }
+}
+impl ToTokens for VarMeaning {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let param_type = &self.index_type;
+        let variant = self.display.var_register();
+        let display_element = self.display.name();
+        let ele_index = self
+            .sleigh
+            .iter()
+            .map(|(i, _v)| Literal::usize_unsuffixed(*i));
+        let ele_value = self.sleigh.iter().map(|(_i, v)| {
+            let regs = self.registers.name();
+            let variant = self.registers.register(v.element_ptr()).unwrap();
+            quote! { #regs::#variant }
+        });
+        let registers_enum = self.registers.name();
+        let display_func = &self.display_func;
+        let value_func = &self.value_func;
+        let index_type = &self.index_type;
+        tokens.extend(quote! {
+            fn #display_func<T>(num: T) -> #display_element
+            where
+                #param_type: TryFrom<T>,
+                <#param_type as TryFrom<T>>::Error: core::fmt::Debug,
+            {
+                let value = #value_func(num.try_into().unwrap());
+                #display_element::#variant(value)
+            }
+            fn #value_func<T>(num: T) -> #registers_enum
+            where
+                #param_type: TryFrom<T>,
+                <#param_type as TryFrom<T>>::Error: core::fmt::Debug,
+            {
+                match #index_type::try_from(num).unwrap() {
+                    #(#ele_index => #ele_value,)*
+                    _ => unreachable!("Invalid Attach Value"),
+                }
+            }
+        });
+    }
 }
 
-impl<'a> Meaning<'a> {
+type NameMeaningSleigh = [(usize, String)];
+#[derive(Debug, Clone)]
+pub struct NameMeaning {
+    sleigh: Rc<NameMeaningSleigh>,
+    display: Rc<DisplayElement>,
+    pub display_func: Ident,
+    pub index_type: WorkType,
+}
+impl NameMeaning {
     pub fn new(
-        sleigh: &Rc<sleigh_rs::semantic::Meaning>,
-        registers: Rc<RegistersEnum<'a>>,
+        sleigh: Rc<NameMeaningSleigh>,
         display: Rc<DisplayElement>,
+        fun_count: usize,
     ) -> Self {
-        let ptr: *const _ = Rc::as_ptr(sleigh);
-        let name = format_ident!("meaning_{}", ptr as usize);
+        let index_max =
+            sleigh.iter().map(|(index, _varnode)| *index).max().unwrap();
+        let index_bits = (usize::BITS - index_max.leading_zeros()) + 1;
+        let index_type = WorkType::new_int_bits(
+            NonZeroTypeU::new(index_bits.into()).unwrap(),
+            false,
+        );
         Self {
-            name,
-            sleigh: Rc::clone(sleigh),
-            registers,
+            sleigh,
             display,
+            index_type,
+            display_func: format_ident!("meaning_{}_display", fun_count),
         }
     }
-    pub fn name(&self) -> &Ident {
-        &self.name
-    }
-    pub fn sleigh(&self) -> &sleigh_rs::semantic::Meaning {
-        &self.sleigh
-    }
-    pub fn generate(&self) -> TokenStream {
-        match self.sleigh() {
-            sleigh_rs::semantic::Meaning::Variable { size: _, vars } => {
-                self.gen_variable(&vars)
-            }
-            sleigh_rs::semantic::Meaning::Name(literals) => {
-                self.gen_name(&literals)
-            }
-            sleigh_rs::semantic::Meaning::Value(values) => {
-                self.gen_value(&values)
-            }
-        }
-    }
-    fn gen_name(&self, literal: &[Option<String>]) -> TokenStream {
-        let name = self.name();
-        let num = format_ident!("value");
+}
+impl ToTokens for NameMeaning {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let param_type = &self.index_type;
+        let variant = self.display.var_named();
         let display_element = self.display.name();
-        let ele_num = literal
+        let ele_index = self
+            .sleigh
             .iter()
-            .enumerate()
-            .filter_map(|(i, x)| x.as_ref().map(|_| i));
-        let ele_value =
-            literal.iter().enumerate().filter_map(|(_, x)| x.as_ref());
-        let variant = self.display.literal_var();
-        quote! {
-            pub fn #name(#num: usize) -> #display_element {
-                match #num {
-                    #(#ele_num => #display_element::#variant(#ele_value),)*
+            .map(|(i, _v)| Literal::usize_unsuffixed(*i));
+        let ele_value = self.sleigh.iter().map(|(_i, v)| v);
+        let display_func = &self.display_func;
+        let index_type = &self.index_type;
+        tokens.extend(quote! {
+            fn #display_func<T>(num: T) -> #display_element
+            where
+                #param_type: TryFrom<T>,
+                <#param_type as TryFrom<T>>::Error: core::fmt::Debug,
+            {
+                match #index_type::try_from(num).unwrap() {
+                    #(#ele_index => #display_element::#variant(#ele_value),)*
                     _ => unreachable!("Invalid Attach Value"),
                 }
             }
+        });
+    }
+}
+type ValueMeaningSleigh = [(usize, IntTypeS)];
+#[derive(Debug, Clone)]
+pub struct ValueMeaning {
+    sleigh: Rc<ValueMeaningSleigh>,
+    display: Rc<DisplayElement>,
+    pub display_func: Ident,
+    pub value_func: Ident,
+    pub index_type: WorkType,
+    pub value_type: WorkType,
+}
+impl ValueMeaning {
+    pub fn new(
+        sleigh: Rc<ValueMeaningSleigh>,
+        display: Rc<DisplayElement>,
+        fun_count: usize,
+    ) -> Self {
+        let index_max =
+            sleigh.iter().map(|(index, _varnode)| *index).max().unwrap();
+        let index_bits = (usize::BITS - index_max.leading_zeros()) + 1;
+        let index_type = WorkType::new_int_bits(
+            NonZeroTypeU::new(index_bits.into()).unwrap(),
+            false,
+        );
+        let (min, max) = sleigh.iter().map(|(_i, value)| *value).fold(
+            (0, 0),
+            |(min, max), value| {
+                let min = min.min(value);
+                let max = max.max(value);
+                (min, max)
+            },
+        );
+        let signed = min < 0;
+        //TODO this is not TOTALLY true, but good enough for now
+        let value_bits =
+            (IntTypeS::BITS - min.abs().max(max).leading_zeros()) + 1;
+        let value_type = WorkType::new_int_bits(
+            NonZeroTypeU::new(value_bits.into()).unwrap(),
+            signed,
+        );
+        Self {
+            sleigh,
+            display,
+            display_func: format_ident!("meaning_{}_display", fun_count),
+            value_func: format_ident!("meaning_{}_value", fun_count),
+            index_type,
+            value_type,
         }
     }
-    fn gen_value(&self, values: &[Option<IntTypeS>]) -> TokenStream {
-        let name = self.name();
-        let num = format_ident!("value");
+}
+
+impl ToTokens for ValueMeaning {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let param_type = &self.index_type;
         let display_element = self.display.name();
-        let ele_num = values
+        let ele_index = self
+            .sleigh
             .iter()
-            .enumerate()
-            .filter_map(|(i, x)| x.as_ref().map(|_| i));
-        let ele_value =
-            values.iter().enumerate().filter_map(|(_, x)| x.as_ref());
-        //if all positive, the unsiged, otherwise signed
-        let all_positive =
-            values.iter().filter_map(|x| x.as_ref()).all(|x| *x > 0);
-        let variant = if all_positive {
-            self.display.unsigned_var()
-        } else {
-            self.display.signed_var()
+            .map(|(i, _v)| Literal::usize_unsuffixed(*i));
+        let ele_value = self
+            .sleigh
+            .iter()
+            .map(|(_i, v)| Literal::i128_unsuffixed((*v).into()));
+        let display_func = &self.display_func;
+        let value_func = &self.value_func;
+        let value_type = &self.value_type;
+        let display_value_type = DisplayElement::var_number_type();
+        let variant = self.display.var_number();
+        let index_type = &self.index_type;
+        tokens.extend(quote! {
+            fn #display_func<T>(hex: bool, num: T) -> #display_element
+            where
+                #param_type: TryFrom<T>,
+                <#param_type as TryFrom<T>>::Error: core::fmt::Debug,
+            {
+                let value = #value_func(num);
+                let value = #display_value_type::try_from(value).unwrap();
+                #display_element::#variant(hex, value)
+            }
+            fn #value_func<T>(num: T) -> #value_type
+            where
+                #param_type: TryFrom<T>,
+                <#param_type as TryFrom<T>>::Error: core::fmt::Debug,
+            {
+                match #index_type::try_from(num).unwrap() {
+                    #(#ele_index => #ele_value,)*
+                    _ => unreachable!("Invalid Attach Value"),
+                }
+            }
+        });
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum MeaningExecutionType {
+    Register(Rc<VarMeaning>),
+    Value(WorkType),
+}
+
+impl ToTokens for MeaningExecutionType {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            MeaningExecutionType::Register(regs) => {
+                let regs_type = regs.registers.name();
+                regs_type.to_tokens(tokens);
+            }
+            MeaningExecutionType::Value(value) => value.to_tokens(tokens),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Meaning {
+    Literal(PrintFmt),
+    Variables(Rc<VarMeaning>),
+    Names(Rc<NameMeaning>),
+    Values(PrintBase, Rc<ValueMeaning>),
+}
+impl Meaning {
+    pub fn execution_type(&self) -> Option<MeaningExecutionType> {
+        match self {
+            Meaning::Literal(_) | Meaning::Names(_) => None,
+            Meaning::Variables(vars) => {
+                Some(MeaningExecutionType::Register(Rc::clone(vars)))
+            }
+            Meaning::Values(_, values) => {
+                Some(MeaningExecutionType::Value(values.value_type))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Meanings {
+    display: Rc<DisplayElement>,
+    pub literal_display: Ident,
+    pub vars: HashMap<*const VarMeaningSleigh, Rc<VarMeaning>>,
+    pub names: HashMap<*const NameMeaningSleigh, Rc<NameMeaning>>,
+    pub values: HashMap<*const ValueMeaningSleigh, Rc<ValueMeaning>>,
+}
+
+impl Meanings {
+    pub fn new<'a>(
+        meanings: impl Iterator<Item = &'a sleigh_rs::Meaning> + 'a,
+        registers: &Rc<RegistersEnum>,
+        display: &Rc<DisplayElement>,
+    ) -> Self {
+        let mut vars = HashMap::new();
+        let mut names = HashMap::new();
+        let mut values = HashMap::new();
+        let mut counter = 0usize;
+        let mut counter_value = || {
+            let value = counter;
+            counter += 1;
+            value
         };
-        quote! {
-            pub fn #name(#num: usize) -> #display_element {
-                match #num {
-                    #(#ele_num => #display_element::#variant(true, #ele_value),)*
-                    _ => unreachable!("Invalid Attach Value"),
+        for meaning in meanings {
+            match meaning {
+                sleigh_rs::Meaning::Literal(_print_fmt) => {}
+                sleigh_rs::Meaning::Variable(list) => {
+                    vars.entry(Rc::as_ptr(list)).or_insert_with(|| {
+                        Rc::new(VarMeaning::new(
+                            Rc::clone(list),
+                            Rc::clone(&display),
+                            Rc::clone(&registers),
+                            counter_value(),
+                        ))
+                    });
+                }
+                sleigh_rs::Meaning::Name(list) => {
+                    names.entry(Rc::as_ptr(list)).or_insert_with(|| {
+                        Rc::new(NameMeaning::new(
+                            Rc::clone(list),
+                            Rc::clone(&display),
+                            counter_value(),
+                        ))
+                    });
+                }
+                sleigh_rs::Meaning::Value(_print_base, list) => {
+                    values.entry(Rc::as_ptr(list)).or_insert_with(|| {
+                        Rc::new(ValueMeaning::new(
+                            Rc::clone(list),
+                            Rc::clone(&display),
+                            counter_value(),
+                        ))
+                    });
+                }
+            }
+        }
+        Self {
+            display: Rc::clone(&display),
+            vars,
+            names,
+            values,
+            literal_display: format_ident!("meaning_number"),
+        }
+    }
+    pub fn from_sleigh(&self, meaning: &sleigh_rs::Meaning) -> Meaning {
+        match meaning {
+            sleigh_rs::Meaning::Literal(print_fmt) => {
+                Meaning::Literal(*print_fmt)
+            }
+            sleigh_rs::Meaning::Variable(var) => self
+                .vars
+                .get(&Rc::as_ptr(var))
+                .map(Rc::clone)
+                .map(Meaning::Variables)
+                .unwrap(),
+            sleigh_rs::Meaning::Name(var) => self
+                .names
+                .get(&Rc::as_ptr(var))
+                .map(Rc::clone)
+                .map(Meaning::Names)
+                .unwrap(),
+            sleigh_rs::Meaning::Value(print_base, var) => self
+                .values
+                .get(&Rc::as_ptr(var))
+                .map(Rc::clone)
+                .map(|x| Meaning::Values(*print_base, x))
+                .unwrap(),
+        }
+    }
+    pub fn display_function_call(
+        &self,
+        value: impl ToTokens,
+        meaning: &sleigh_rs::Meaning,
+    ) -> TokenStream {
+        let _display_type = self.display.name();
+        match meaning {
+            sleigh_rs::Meaning::Literal(print_fmt) => {
+                let function = &self.literal_display;
+                let hex = print_fmt.base().is_hex();
+                quote! { #function(#hex, #value) }
+            }
+            sleigh_rs::Meaning::Variable(vars) => {
+                let meaning = self.vars.get(&Rc::as_ptr(vars)).unwrap();
+                let function = &meaning.display_func;
+                quote! { #function(#value) }
+            }
+            sleigh_rs::Meaning::Name(vars) => {
+                let meaning = self.names.get(&Rc::as_ptr(vars)).unwrap();
+                let function = &meaning.display_func;
+                quote! { #function(#value) }
+            }
+            sleigh_rs::Meaning::Value(print_fmt, vars) => {
+                let meaning = self.values.get(&Rc::as_ptr(vars)).unwrap();
+                let function = &meaning.display_func;
+                let hex = print_fmt.is_hex();
+                quote! {
+                    #function(#hex, #value)
                 }
             }
         }
     }
-    fn gen_variable(
-        &self,
-        values: &[Option<Rc<sleigh_rs::Varnode>>],
-    ) -> TokenStream {
-        let name = self.name();
-        let num = format_ident!("value");
-        let display_element = self.display.name();
-        let ele_num = values
-            .iter()
-            .enumerate()
-            .filter_map(|(i, x)| x.as_ref().map(|_| i));
-        let ele_value = values
-            .iter()
-            .enumerate()
-            .filter_map(|(_, x)| x.as_ref())
-            .map(|x| {
-                let regs = self.registers.name();
-                let variant = &self.registers.register(x).as_ref().unwrap().0;
-                quote! { #regs::#variant }
-            });
-        let variant = self.display.register_var();
-        quote! {
-            pub fn #name(#num: usize) -> #display_element {
-                match #num {
-                    #(#ele_num => #display_element::#variant(#ele_value),)*
-                    _ => unreachable!("Invalid Attach Value"),
-                }
+}
+
+impl ToTokens for Meanings {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let variables = self.vars.values();
+        let names = self.names.values();
+        let values = self.values.values();
+        let literal_func = &self.literal_display;
+        let display_type = self.display.name();
+        let number_type = self.display.var_number();
+        let param_type = WorkType::int_type(true);
+        tokens.extend(quote! {
+            fn #literal_func<T>(hex: bool, num: T) -> #display_type
+            where
+                #param_type: TryFrom<T>,
+                <#param_type as TryFrom<T>>::Error: core::fmt::Debug,
+            {
+                #display_type::#number_type(
+                    hex,
+                    #param_type::try_from(num).unwrap(),
+                )
             }
-        }
+            #(#variables)*
+            #(#names)*
+            #(#values)*
+        })
     }
 }

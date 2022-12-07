@@ -1,7 +1,7 @@
 ## Sleigh2Rust
 
-This is a PoC companion for the project https://github.com/rbran/sleigh-rs.
+The Sleigh2Rust project converts the Ghidra Sleigh code into rust code, capable
+of disassemble and (in the future) emulate multiple cpu architetures. It plan to
+accomplish that by using the lib [sleigh-rs](https://github.com/rbran/sleigh-rs).
 
-It have the objective to implement a disassembler and a enumalator engine.
-
-An output example of this project can be found on https://github.com/rbran/sleigh3rust.
+An output example of this project can be found on [sleigh3rust](https://github.com/rbran/sleigh3rust).

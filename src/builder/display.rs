@@ -1,81 +1,71 @@
+use std::rc::Rc;
+
 use proc_macro2::{Ident, Span, TokenStream};
-use quote::quote;
+use quote::{quote, ToTokens};
+
+use super::{RegistersEnum, WorkType};
 
 #[derive(Debug, Clone)]
 pub struct DisplayElement {
     name: Ident,
-    literal: Ident,
+    named: Ident,
     register: Ident,
-    signed: Ident,
-    unsigned: Ident,
+    number: Ident,
+    registers: Rc<RegistersEnum>,
 }
 impl DisplayElement {
-    pub fn new(name: Ident) -> Self {
-        let literal = Ident::new("Literal", Span::call_site());
+    pub fn new(name: Ident, registers: Rc<RegistersEnum>) -> Rc<Self> {
+        let named = Ident::new("Literal", Span::call_site());
         let register = Ident::new("Register", Span::call_site());
-        let signed = Ident::new("Signed", Span::call_site());
-        let unsigned = Ident::new("Unsigned", Span::call_site());
-        Self {
+        let number = Ident::new("Number", Span::call_site());
+        Rc::new(Self {
             name,
-            literal,
+            named,
             register,
-            signed,
-            unsigned,
-        }
+            number,
+            registers,
+        })
+    }
+    pub fn var_number_type() -> WorkType {
+        WorkType::int_type(true)
     }
     pub fn name(&self) -> &Ident {
         &self.name
     }
-    pub fn literal_var(&self) -> &Ident {
-        &self.literal
+    pub fn var_named(&self) -> &Ident {
+        &self.named
     }
-    pub fn register_var(&self) -> &Ident {
+    pub fn var_register(&self) -> &Ident {
         &self.register
     }
-    pub fn signed_var(&self) -> &Ident {
-        &self.signed
+    pub fn var_number(&self) -> &Ident {
+        &self.number
     }
-    pub fn unsigned_var(&self) -> &Ident {
-        &self.unsigned
-    }
-    pub fn gen_display_element_enum(
-        &self,
-        register_enum: &Ident,
-    ) -> TokenStream {
-        let name = &self.name;
-        let literal = &self.literal;
-        let register = &self.register;
-        let signed = &self.signed;
-        let unsigned = &self.unsigned;
-        //TODO replace i64 for IntTypeS type
-        quote! {
+}
+impl ToTokens for DisplayElement {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let Self {
+            name,
+            named,
+            register,
+            number,
+            registers,
+        } = self;
+        let number_type = WorkType::int_type(true);
+        let register_enum = registers.name();
+        tokens.extend(quote! {
             #[derive(Clone, Copy, Debug)]
             pub enum #name {
-                #literal(&'static str),
+                #named(&'static str),
                 #register(#register_enum),
-                #signed(bool, i64),
-                #unsigned(bool, u64),
+                #number(bool, #number_type),
             }
-        }
-    }
-    pub fn gen_impl_display(&self) -> TokenStream {
-        let name = self.name();
-        let literal = &self.literal;
-        let register = &self.register;
-        let signed = &self.signed;
-        let unsigned = &self.unsigned;
-        quote! {
             impl core::fmt::Display for #name {
                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {
                     match self {
-                        Self::#literal(lit) => lit.fmt(f),
+                        Self::#named(lit) => lit.fmt(f),
                         Self::#register(reg) => reg.fmt(f),
-                        Self::#signed(hex, value) => if *hex {
-                            write!(f, "0x{:x}", value)
-                        } else {
-                            value.fmt(f)
-                        },
-                        Self::#unsigned(hex, value) => if *hex {
+                        Self::#number(hex, value) => if *hex {
                             write!(f, "0x{:x}", value)
                         } else {
                             value.fmt(f)
@@ -83,6 +73,6 @@ impl DisplayElement {
                     }
                 }
             }
-        }
+        })
     }
 }
