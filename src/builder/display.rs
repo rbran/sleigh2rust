@@ -65,11 +65,13 @@ impl ToTokens for DisplayElement {
                     match self {
                         Self::#named(lit) => lit.fmt(f),
                         Self::#register(reg) => reg.fmt(f),
-                        Self::#number(hex, value) => if *hex {
-                            write!(f, "0x{:x}", value)
-                        } else {
-                            value.fmt(f)
-                        },
+                        Self::#number(hex, value) => {
+                            match (*hex, value.is_negative()) {
+                                (true, true) => write!(f, "-0x{:x}", value.abs()),
+                                (true, false) => write!(f, "0x{:x}", value),
+                                (false, _) => value.fmt(f),
+                            }
+                        }
                     }
                 }
             }
