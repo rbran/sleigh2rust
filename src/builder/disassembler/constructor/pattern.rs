@@ -669,7 +669,7 @@ fn block_or_closure(
                     token_parser: Some(&token_parser_name),
                 }
                 .expr(value.expr());
-                let cons_op = pattern_cmp_token_neg(op);
+                let cons_op = pattern_cmp_token(op);
                 let token_field =
                     disassembler.token_parser.gen_disassembly_read_call(
                         &token_parser_name,
