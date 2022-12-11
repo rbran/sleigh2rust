@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -17,8 +17,8 @@ use super::{
 pub struct DisassemblerMemory {
     pub memory_read_trait: Rc<MemoryAccessTrait>,
     pub memory_write_trait: Rc<MemoryAccessTrait>,
-    pub space_traits: HashMap<*const sleigh_rs::Space, Rc<SpaceTrait>>,
-    pub space_structs: HashMap<*const sleigh_rs::Space, Rc<SpaceStruct>>,
+    pub space_traits: IndexMap<*const sleigh_rs::Space, Rc<SpaceTrait>>,
+    pub space_structs: IndexMap<*const sleigh_rs::Space, Rc<SpaceStruct>>,
     pub spaces_trait: Rc<SpacesTrait>,
     pub spaces_struct: Rc<SpacesStruct>,
 }
@@ -38,12 +38,12 @@ impl DisassemblerMemory {
             .contexts()
             .map(|context| context.varnode().space())
             .map(|space| (space.element_ptr(), space))
-            .collect::<HashMap<*const _, &GlobalElement<_>>>()
+            .collect::<IndexMap<*const _, &GlobalElement<_>>>()
             .into_iter()
             .map(|(_k, v)| v.clone())
             .collect();
 
-        let space_traits: HashMap<*const sleigh_rs::Space, Rc<SpaceTrait>> =
+        let space_traits: IndexMap<*const sleigh_rs::Space, Rc<SpaceTrait>> =
             spaces
                 .iter()
                 .map(|space| {
@@ -78,7 +78,7 @@ impl DisassemblerMemory {
             space_traits.values(),
         );
 
-        let space_structs: HashMap<*const sleigh_rs::Space, Rc<SpaceStruct>> =
+        let space_structs: IndexMap<*const sleigh_rs::Space, Rc<SpaceStruct>> =
             spaces
                 .iter()
                 .map(|space| {
@@ -477,15 +477,15 @@ pub struct SpaceTrait {
     pub name: Ident,
     pub trait_read: Rc<MemoryAccessTrait>,
     pub trait_write: Option<Rc<MemoryAccessTrait>>,
-    pub varnodes: HashMap<
+    pub varnodes: IndexMap<
         *const sleigh_rs::Varnode,
         SpaceTraitElement<sleigh_rs::Varnode>,
     >,
-    pub bitranges: HashMap<
+    pub bitranges: IndexMap<
         *const sleigh_rs::Bitrange,
         SpaceTraitElement<sleigh_rs::Bitrange>,
     >,
-    pub contexts: HashMap<*const sleigh_rs::Context, ContextAccess>,
+    pub contexts: IndexMap<*const sleigh_rs::Context, ContextAccess>,
 }
 
 impl SpaceTrait {
@@ -690,7 +690,7 @@ pub struct SpacesTrait {
     //trait name
     pub name: Ident,
     //addressable spaces read/write function names
-    pub spaces: HashMap<*const sleigh_rs::Space, SpacesTraitAssociatedType>,
+    pub spaces: IndexMap<*const sleigh_rs::Space, SpacesTraitAssociatedType>,
 }
 
 impl SpacesTrait {
@@ -961,7 +961,7 @@ pub struct SpacesStruct {
     //name of the global memory struct
     pub name: Ident,
     //spaces that this struct can read/write
-    pub spaces: HashMap<*const sleigh_rs::Space, (Ident, Rc<SpaceStruct>)>,
+    pub spaces: IndexMap<*const sleigh_rs::Space, (Ident, Rc<SpaceStruct>)>,
     pub spaces_trait: Rc<SpacesTrait>,
 }
 

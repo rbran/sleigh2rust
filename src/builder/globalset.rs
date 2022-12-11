@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 use proc_macro2::{Ident, TokenStream};
 use quote::ToTokens;
@@ -30,7 +30,7 @@ impl GlobalSetContext {
 #[derive(Clone, Debug)]
 pub struct GlobalSetTrait {
     name: Ident,
-    varnodes: HashMap<*const sleigh_rs::Context, GlobalSetContext>,
+    varnodes: IndexMap<*const sleigh_rs::Context, GlobalSetContext>,
     addr_type: WorkType,
 }
 

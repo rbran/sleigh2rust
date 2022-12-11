@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::rc::Rc;
 use std::rc::Weak;
 
@@ -50,7 +50,7 @@ impl TableEnum {
     }
     pub fn populate(
         &self,
-        tables: &HashMap<*const sleigh_rs::Table, Rc<TableEnum>>,
+        tables: &IndexMap<*const sleigh_rs::Table, Rc<TableEnum>>,
     ) {
         let sleigh = self.sleigh.element();
         let constructors = sleigh

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::rc::Rc;
 
 use proc_macro2::{Ident, Literal, TokenStream};
@@ -279,9 +279,9 @@ impl Meaning {
 pub struct Meanings {
     display: Rc<DisplayElement>,
     pub literal_display: Ident,
-    pub vars: HashMap<*const VarMeaningSleigh, Rc<VarMeaning>>,
-    pub names: HashMap<*const NameMeaningSleigh, Rc<NameMeaning>>,
-    pub values: HashMap<*const ValueMeaningSleigh, Rc<ValueMeaning>>,
+    pub vars: IndexMap<*const VarMeaningSleigh, Rc<VarMeaning>>,
+    pub names: IndexMap<*const NameMeaningSleigh, Rc<NameMeaning>>,
+    pub values: IndexMap<*const ValueMeaningSleigh, Rc<ValueMeaning>>,
 }
 
 impl Meanings {
@@ -290,9 +290,9 @@ impl Meanings {
         registers: &Rc<RegistersEnum>,
         display: &Rc<DisplayElement>,
     ) -> Self {
-        let mut vars = HashMap::new();
-        let mut names = HashMap::new();
-        let mut values = HashMap::new();
+        let mut vars = IndexMap::new();
+        let mut names = IndexMap::new();
+        let mut values = IndexMap::new();
         let mut counter = 0usize;
         let mut counter_value = || {
             let value = counter;

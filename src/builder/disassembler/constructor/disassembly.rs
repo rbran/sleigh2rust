@@ -1,5 +1,5 @@
+use indexmap::IndexMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use proc_macro2::{Ident, TokenStream};
@@ -21,7 +21,7 @@ pub struct DisassemblyDisplay<'a> {
     pub inst_start: &'a Ident,
     pub inst_next: &'a Ident,
     pub global_set_param: &'a Ident,
-    pub vars: RefCell<HashMap<*const Variable, ParsedField<Rc<Variable>>>>,
+    pub vars: RefCell<IndexMap<*const Variable, ParsedField<Rc<Variable>>>>,
 }
 
 impl<'a> DisassemblyDisplay<'a> {
@@ -164,11 +164,10 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
         let mut vars = self.vars.borrow_mut();
         let ptr: *const Variable = Rc::as_ptr(var);
         let var_name = format_ident!("{}", from_sleigh(var.name()));
+        use indexmap::map::Entry::*;
         match vars.entry(ptr) {
-            std::collections::hash_map::Entry::Occupied(_) => {
-                unreachable!("Variable duplicated")
-            }
-            std::collections::hash_map::Entry::Vacant(entry) => {
+            Occupied(_) => unreachable!("Variable duplicated"),
+            Vacant(entry) => {
                 let entry =
                     entry.insert(ParsedField::new(var_name, Rc::clone(var)));
                 let name = &entry.name;
@@ -191,9 +190,9 @@ pub struct DisassemblyPattern<'a> {
     pub token_parser: Option<&'a Ident>,
     pub context_param: &'a Ident,
     pub inst_start: &'a Ident,
-    pub root_tables: &'a HashMap<*const sleigh_rs::Table, Ident>,
-    pub root_token_fields: &'a HashMap<*const sleigh_rs::TokenField, Ident>,
-    pub vars: RefCell<HashMap<*const Variable, ParsedField<Rc<Variable>>>>,
+    pub root_tables: &'a IndexMap<*const sleigh_rs::Table, Ident>,
+    pub root_token_fields: &'a IndexMap<*const sleigh_rs::TokenField, Ident>,
+    pub vars: RefCell<IndexMap<*const Variable, ParsedField<Rc<Variable>>>>,
 }
 
 impl<'a> DisassemblyPattern<'a> {
@@ -308,11 +307,10 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyPattern<'a> {
         let mut vars = self.vars.borrow_mut();
         let ptr: *const Variable = Rc::as_ptr(var);
         let var_name = format_ident!("{}", from_sleigh(var.name()));
+        use indexmap::map::Entry::*;
         match vars.entry(ptr) {
-            std::collections::hash_map::Entry::Occupied(_) => {
-                unreachable!("Variable duplicated")
-            }
-            std::collections::hash_map::Entry::Vacant(entry) => {
+            Occupied(_) => unreachable!("Variable duplicated"),
+            Vacant(entry) => {
                 let entry =
                     entry.insert(ParsedField::new(var_name, Rc::clone(var)));
                 let name = &entry.name;

@@ -1,4 +1,4 @@
-//use std::collections::HashMap;
+//use indexmap::IndexMap;
 //use std::rc::Rc;
 //
 //use proc_macro2::Ident;
@@ -7,8 +7,8 @@
 //use super::{from_sleigh, snake_case, SLEIGH_IDENT};
 //
 //pub struct Functions {
-//    macros: HashMap<*const sleigh_rs::PcodeMacro, PcodeMacro>,
-//    functions: HashMap<*const sleigh_rs::UserFunction, UserFunction>,
+//    macros: IndexMap<*const sleigh_rs::PcodeMacro, PcodeMacro>,
+//    functions: IndexMap<*const sleigh_rs::UserFunction, UserFunction>,
 //}
 //
 //impl Functions {
@@ -58,8 +58,8 @@
 //struct PcodeMacroBuilder<'a, 'b> {
 //    builder: &'a mut Builder<'b>,
 //    pcode_macro: &'a PcodeMacro,
-//    params: HashMap<Rc<str>, Ident>,
-//    vars: HashMap<Rc<str>, Ident>,
+//    params: IndexMap<Rc<str>, Ident>,
+//    vars: IndexMap<Rc<str>, Ident>,
 //}
 //
 //impl<'a, 'b> PcodeMacroBuilder<'a, 'b> {
@@ -70,12 +70,12 @@
 //        Self {
 //            builder,
 //            pcode_macro,
-//            params: HashMap::new(),
-//            vars: HashMap::new(),
+//            params: IndexMap::new(),
+//            vars: IndexMap::new(),
 //        }
 //    }
 //    pub fn impl_function(&mut self) -> TokenStream {
-//        let pcode_macros = self.builder.pcode_macros.insert(HashMap::new());
+//        let pcode_macros = self.builder.pcode_macros.insert(IndexMap::new());
 //        let function_name = Rc::clone(&self.pcode_macro.name);
 //        let function_ident = pcode_macros
 //            .entry(Rc::clone(&function_name))

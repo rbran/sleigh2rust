@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::rc::Rc;
 
 use proc_macro2::{Ident, TokenStream};
@@ -141,7 +141,7 @@ pub struct TokenParser {
     //pub token_bytes: NonZeroTypeU,
     //token_field that this parser can produce
     fields:
-        HashMap<*const sleigh_rs::TokenField, (Ident, Rc<TokenFieldStruct>)>,
+        IndexMap<*const sleigh_rs::TokenField, (Ident, Rc<TokenFieldStruct>)>,
 }
 impl TokenParser {
     pub fn new(

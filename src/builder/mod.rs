@@ -492,7 +492,7 @@ impl ToTokens for BitrangeRW {
 //    }
 //
 //    //pub fn impl_memory_addr_function(&mut self) -> TokenStream {
-//    //    let mut memory_addr_function = HashMap::new();
+//    //    let mut memory_addr_function = IndexMap::new();
 //
 //    //    let data = format_ident!("data");
 //    //    let addr = format_ident!("addr");
@@ -582,7 +582,7 @@ impl ToTokens for BitrangeRW {
 //    //}
 //    pub fn impl_varnode_function(&mut self) -> TokenStream {
 //        todo!();
-//        //let mut varnode_functions = HashMap::new();
+//        //let mut varnode_functions = IndexMap::new();
 //        //let funs = self.sleigh
 //        //.global_scope
 //        //.values()
@@ -688,7 +688,7 @@ impl ToTokens for BitrangeRW {
 //    }
 //    pub fn impl_user_function(&mut self) -> TokenStream {
 //        todo!()
-//        //let mut user_functions = HashMap::new();
+//        //let mut user_functions = IndexMap::new();
 //        //let user_functions = self
 //        //    .sleigh
 //        //    .global_scope

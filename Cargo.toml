@@ -10,3 +10,4 @@ sleigh-rs = { "path"= "../sleigh-rs" }
 quote = "1"
 bitvec = "1"
 proc-macro2 = "1"
+indexmap = "1.9"

@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::rc::{Rc, Weak};
 
 use proc_macro2::{Ident, TokenStream};
@@ -101,26 +101,26 @@ pub struct ConstructorStruct {
     pub display_fun: Ident,
     pub disassembly_fun: Ident,
     pub parser_fun: Ident,
-    pub table_fields: HashMap<*const sleigh_rs::Table, TableField>,
-    pub ass_fields: HashMap<*const sleigh_rs::TokenField, TokenFieldField>,
+    pub table_fields: IndexMap<*const sleigh_rs::Table, TableField>,
+    pub ass_fields: IndexMap<*const sleigh_rs::TokenField, TokenFieldField>,
     //TODO instead of having calc fields, have a constructor phase 1/2, with
     //the display/execution values in phase2 and values required by the
     //disassembly in phase1
     //Alternativally, having the having display call execute all the disassembly
     //as this will never be in the disassembly_pre
-    //pub calc_fields: HashMap<*const Variable, ParsedField<Rc<Variable>>>,
+    //pub calc_fields: IndexMap<*const Variable, ParsedField<Rc<Variable>>>,
 }
 impl ConstructorStruct {
     pub fn new(
         sleigh: Rc<sleigh_rs::Constructor>,
-        tables: &HashMap<*const sleigh_rs::Table, Rc<TableEnum>>,
+        tables: &IndexMap<*const sleigh_rs::Table, Rc<TableEnum>>,
         disassembler: Weak<Disassembler>,
         table_name: &str,
         number: usize,
     ) -> Self {
-        let mut calc_fields = HashMap::new();
-        let mut ass_fields: HashMap<*const sleigh_rs::TokenField, _> =
-            HashMap::new();
+        let mut calc_fields = IndexMap::new();
+        let mut ass_fields: IndexMap<*const sleigh_rs::TokenField, _> =
+            IndexMap::new();
         //tables are always included to the struct, used or not
         let table_fields = sleigh
             .pattern
@@ -264,7 +264,7 @@ impl ConstructorStruct {
             inst_start: &inst_start,
             inst_next: &inst_next,
             global_set_param: &global_set_param,
-            vars: RefCell::new(HashMap::new()),
+            vars: RefCell::new(IndexMap::new()),
         };
         let disassembly_body = disassembly.to_token_stream();
         let displays = self

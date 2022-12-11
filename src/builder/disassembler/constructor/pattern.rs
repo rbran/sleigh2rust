@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::rc::Rc;
 
 use proc_macro2::{Ident, TokenStream};
@@ -26,8 +26,8 @@ pub fn root_pattern_function(
     let pattern_len = format_ident!("pattern_len");
     let tokens_current = format_ident!("tokens_current");
     let context_instance = format_ident!("context_instance");
-    let mut root_tables = HashMap::new();
-    let mut root_token_fields = HashMap::new();
+    let mut root_tables = IndexMap::new();
+    let mut root_token_fields = IndexMap::new();
     let mut blocks_iter =
         constructor.sleigh.pattern.blocks().iter().enumerate();
 
@@ -42,8 +42,8 @@ pub fn root_pattern_function(
             &inst_start,
             &context_instance,
             &tokens_current,
-            &HashMap::new(),
-            &HashMap::new(),
+            &IndexMap::new(),
+            &IndexMap::new(),
             &mut root_tables,
             &mut root_token_fields,
         )
@@ -60,8 +60,8 @@ pub fn root_pattern_function(
                 &inst_start,
                 &context_instance,
                 &tokens_current,
-                &HashMap::new(),
-                &HashMap::new(),
+                &IndexMap::new(),
+                &IndexMap::new(),
                 &mut root_tables,
                 &mut root_token_fields,
             )
@@ -70,7 +70,7 @@ pub fn root_pattern_function(
     let table_fields = root_tables.iter().map(|(ptr, gen_name)| {
         let struct_field = constructor
             .table_fields
-            .get(&ptr)
+            .get(ptr)
             .expect("LOGIC_ERROR: Produced table is not part of the struct");
         let struct_field_name = &struct_field.name;
         (struct_field_name, gen_name)
@@ -79,7 +79,7 @@ pub fn root_pattern_function(
         root_token_fields
             .iter()
             .filter_map(|(ptr, gen_field_name)| {
-                let struct_field = constructor.ass_fields.get(&ptr)?;
+                let struct_field = constructor.ass_fields.get(ptr)?;
                 let struct_field_name = &struct_field.name;
                 Some((struct_field_name, gen_field_name))
             });
@@ -124,16 +124,16 @@ fn sub_pattern_closure(
     constructor: &ConstructorStruct,
     pattern: &sleigh_rs::Pattern,
     inst_start: &Ident,
-    root_tables: &HashMap<*const sleigh_rs::Table, Ident>,
-    root_token_fields: &HashMap<*const sleigh_rs::TokenField, Ident>,
+    root_tables: &IndexMap<*const sleigh_rs::Table, Ident>,
+    root_token_fields: &IndexMap<*const sleigh_rs::TokenField, Ident>,
 ) -> TokenStream {
     let disassembler = constructor.disassembler.upgrade().unwrap();
     let tokens_current = format_ident!("tokens");
     let inst_work_type = &disassembler.inst_work_type;
     let pattern_len = format_ident!("pattern_len");
     let context_instance = format_ident!("context_instance");
-    let mut produced_tables = HashMap::new();
-    let mut produced_token_fields = HashMap::new();
+    let mut produced_tables = IndexMap::new();
+    let mut produced_token_fields = IndexMap::new();
     let blocks_parse: TokenStream = pattern
         .blocks()
         .iter()
@@ -205,8 +205,8 @@ fn disassembly_pre_match(
     token_parser: Option<&Ident>,
     context_param: &Ident,
     inst_start: &Ident,
-    root_tables: &HashMap<*const sleigh_rs::Table, Ident>,
-    root_token_fields: &HashMap<*const sleigh_rs::TokenField, Ident>,
+    root_tables: &IndexMap<*const sleigh_rs::Table, Ident>,
+    root_token_fields: &IndexMap<*const sleigh_rs::TokenField, Ident>,
 ) -> TokenStream {
     let disassembler = constructor.disassembler.upgrade().unwrap();
     let disassembly_pattern = DisassemblyPattern {
@@ -231,10 +231,10 @@ fn body_block(
     inst_start: &Ident,
     context_param: &Ident,
     tokens: &Ident,
-    root_tables: &HashMap<*const sleigh_rs::Table, Ident>,
-    root_token_fields: &HashMap<*const sleigh_rs::TokenField, Ident>,
-    produced_tables: &mut HashMap<*const sleigh_rs::Table, Ident>,
-    produced_fields: &mut HashMap<*const sleigh_rs::TokenField, Ident>,
+    root_tables: &IndexMap<*const sleigh_rs::Table, Ident>,
+    root_token_fields: &IndexMap<*const sleigh_rs::TokenField, Ident>,
+    produced_tables: &mut IndexMap<*const sleigh_rs::Table, Ident>,
+    produced_fields: &mut IndexMap<*const sleigh_rs::TokenField, Ident>,
 ) -> TokenStream {
     match block {
         sleigh_rs::Block::And {
@@ -327,10 +327,10 @@ fn body_block_and(
     inst_start: &Ident,
     context: &Ident,
     tokens: &Ident,
-    root_tables: &HashMap<*const sleigh_rs::Table, Ident>,
-    root_token_fields: &HashMap<*const sleigh_rs::TokenField, Ident>,
-    produced_tables: &mut HashMap<*const sleigh_rs::Table, Ident>,
-    produced_token_fields: &mut HashMap<*const sleigh_rs::TokenField, Ident>,
+    root_tables: &IndexMap<*const sleigh_rs::Table, Ident>,
+    root_token_fields: &IndexMap<*const sleigh_rs::TokenField, Ident>,
+    produced_tables: &mut IndexMap<*const sleigh_rs::Table, Ident>,
+    produced_token_fields: &mut IndexMap<*const sleigh_rs::TokenField, Ident>,
 ) -> TokenStream {
     let block_len = format_ident!("block_{}_len", block_index);
     let disassembler = constructor.disassembler.upgrade().unwrap();
@@ -399,8 +399,8 @@ fn body_block_and_pre(
     verifications: &[Verification],
     _block_len: &Ident,
     inst_start: &Ident,
-    _root_tables: &HashMap<*const sleigh_rs::Table, Ident>,
-    root_token_fields: &HashMap<*const sleigh_rs::TokenField, Ident>,
+    _root_tables: &IndexMap<*const sleigh_rs::Table, Ident>,
+    root_token_fields: &IndexMap<*const sleigh_rs::TokenField, Ident>,
     tokens: &Ident,
     context_instance: &Ident,
 ) -> (Option<Ident>, TokenStream) {
@@ -465,13 +465,13 @@ fn body_block_and_pos(
     verifications: &[Verification],
     block_len: &Ident,
     inst_start: &Ident,
-    root_tables: &HashMap<*const sleigh_rs::Table, Ident>,
-    root_token_fields: &HashMap<*const sleigh_rs::TokenField, Ident>,
+    root_tables: &IndexMap<*const sleigh_rs::Table, Ident>,
+    root_token_fields: &IndexMap<*const sleigh_rs::TokenField, Ident>,
     token_parser_name: Option<&Ident>,
     tokens: &Ident,
     context_instance: &Ident,
-    produced_tables: &mut HashMap<*const sleigh_rs::Table, Ident>,
-    produced_token_fields: &mut HashMap<*const sleigh_rs::TokenField, Ident>,
+    produced_tables: &mut IndexMap<*const sleigh_rs::Table, Ident>,
+    produced_token_fields: &mut IndexMap<*const sleigh_rs::TokenField, Ident>,
 ) -> TokenStream {
     let disassembler = constructor.disassembler.upgrade().unwrap();
     //verify all the values and build all the tables
@@ -605,8 +605,8 @@ fn block_or_closure(
     branches: &[Verification],
     _block_len: &Ident,
     inst_start: &Ident,
-    root_tables: &HashMap<*const sleigh_rs::Table, Ident>,
-    root_token_fields: &HashMap<*const sleigh_rs::TokenField, Ident>,
+    root_tables: &IndexMap<*const sleigh_rs::Table, Ident>,
+    root_token_fields: &IndexMap<*const sleigh_rs::TokenField, Ident>,
 ) -> TokenStream {
     let disassembler = constructor.disassembler.upgrade().unwrap();
     let tokens_param = format_ident!("tokens_param");
@@ -722,7 +722,7 @@ fn block_or_closure(
                 );
                 let sub_pattern_name =
                     format_ident!("sub_pattern_c{}", location.column);
-                let tables: HashMap<_, _> = pattern
+                let tables: IndexMap<_, _> = pattern
                     .tables()
                     .map(|field_table| {
                         let table = field_table.table();
@@ -743,7 +743,7 @@ fn block_or_closure(
                         (ptr, field)
                     })
                     .collect();
-                let fields: HashMap<_, _> = pattern
+                let fields: IndexMap<_, _> = pattern
                     .token_fields()
                     .map(|field| {
                         let ptr = field.token_field().element_ptr();
@@ -885,7 +885,7 @@ struct BlockParserValuesDisassembly<'a> {
     disassembler: &'a Disassembler,
     context_instance: &'a Ident,
     inst_start: &'a Ident,
-    produced_fields: &'a HashMap<*const sleigh_rs::TokenField, Ident>,
+    produced_fields: &'a IndexMap<*const sleigh_rs::TokenField, Ident>,
     token_parser: Option<&'a Ident>,
 }
 //Block parser only use Disassembly for the pattern value, so only value is used

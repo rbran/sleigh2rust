@@ -1,5 +1,7 @@
 use std::rc::Rc;
-use std::{collections::HashMap, rc::Weak};
+use std::rc::Weak;
+
+use indexmap::IndexMap;
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
@@ -34,7 +36,7 @@ pub struct Disassembler {
     //all possible display elements: Literal/Register/Value
     pub display: Rc<DisplayElement>,
     //all tables, that will implement parser/disassembly/display
-    pub tables: HashMap<*const sleigh_rs::Table, Rc<TableEnum>>,
+    pub tables: IndexMap<*const sleigh_rs::Table, Rc<TableEnum>>,
     pub inst_work_type: WorkType,
     //make sure sleigh is not droped, so the inner references are not dropped
     pub sleigh: Rc<sleigh_rs::Sleigh>,
@@ -74,7 +76,7 @@ impl Disassembler {
         let global_set = GlobalSetTrait::new(&sleigh);
 
         let me = Rc::new_cyclic(|me| {
-            let tables: HashMap<*const _, Rc<TableEnum>> = sleigh
+            let tables: IndexMap<*const _, Rc<TableEnum>> = sleigh
                 .tables()
                 .map(|table| {
                     let ptr = table.element_ptr();
