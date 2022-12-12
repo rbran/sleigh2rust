@@ -421,7 +421,8 @@ impl ToTokens for BitrangeRW {
                         let value_max = <$unsigned_type>::MAX >> (TYPE_BITS - len_bits);
                         let mask = value_max << start_bit;
                         let mut value = value;
-                        assert!(value <= value_max);
+                        //NOTE context write can overflow
+                        //assert!(value <= value_max);
                         value <<= start_bit;
                         value = (mem & !mask) | value;
                         if BIG_ENDIAN {
@@ -441,8 +442,9 @@ impl ToTokens for BitrangeRW {
                         assert!(len_bits + start_bit <= TYPE_BITS);
                         let value_max = <$signed_type>::MAX >> (TYPE_BITS - len_bits);
                         let value_min = <$signed_type>::MIN >> (TYPE_BITS - len_bits);
-                        assert!(value <= value_max);
-                        assert!(value >= value_min);
+                        //NOTE context write can overflow
+                        //assert!(value <= value_max);
+                        //assert!(value >= value_min);
                         let mask = <$unsigned_type>::MAX >> (TYPE_BITS - len_bits);
                         let value = value as $unsigned_type & mask;
                         let mem = mem as $unsigned_type;
