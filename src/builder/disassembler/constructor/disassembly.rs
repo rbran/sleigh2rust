@@ -122,6 +122,10 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
                 let name = self.inst_next;
                 quote! { Some(#name) }
             }
+            InstStart(_) => {
+                let name = self.inst_start;
+                quote! { Some(#name) }
+            }
         };
         let set_function = context.function();
         let global_set_param = self.global_set_param;
