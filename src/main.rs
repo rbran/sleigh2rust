@@ -21,7 +21,7 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         "HCS12",
         &[
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            //"HCS12"
+            "HCS12"
         ],
     ),
     (
@@ -33,8 +33,8 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
             //"avr8eind",
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            //"avr8",
-            //"avr8e",
+            "avr8",
+            "avr8e",
         ],
     ),
     (
@@ -48,15 +48,15 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         "PA-RISC",
         &[
             //TODO: sometimes the dst addr is 32, other time 64
-            //"pa-risc32be",
+            "pa-risc32be",
         ],
     ),
     (
         "RISCV",
         &[
             //TODO: try to assign a 32bits value into a 64bits varnode
-            //"riscv.ilp32d",
-            //"riscv.lp64d",
+            "riscv.ilp32d",
+            "riscv.lp64d",
         ],
     ),
     (
@@ -64,7 +64,7 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            //"V850",
+            "V850",
         ],
     ),
     (
@@ -72,8 +72,8 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            //"6502",
-            //"65c02",
+            "6502",
+            "65c02",
         ],
     ),
     (
@@ -81,8 +81,8 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            //"CR16B",
-            //"CR16C",
+            "CR16B",
+            "CR16C",
         ],
     ),
     (
@@ -90,8 +90,8 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            //"z80",
-            //"z180",
+            "z80",
+            "z180",
         ],
     ),
     (
@@ -99,9 +99,9 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            //"HC08",
-            //"HCS08",
-            //"HC05",
+            "HC08",
+            "HCS08",
+            "HC05",
         ],
     ),
     (
@@ -109,7 +109,7 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            //"tricore",
+            "tricore",
         ],
     ),
     (
@@ -117,9 +117,9 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            //"6809",
-            //"6805",
-            //"H6309",
+            "6809",
+            "6805",
+            "H6309",
         ],
     ),
     (
@@ -127,7 +127,7 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            //"MCS96",
+            "MCS96",
         ],
     ),
     (
@@ -144,7 +144,7 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            //"CP1600",
+            "CP1600",
         ],
     ),
     (
@@ -152,7 +152,7 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            //"m8c",
+            "m8c",
         ],
     ),
     (
@@ -160,17 +160,17 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            //"80251",
-            //"80390",
-            //"8051",
-            //"mx51",
+            "80251",
+            "80390",
+            "8051",
+            "mx51",
         ],
     ),
     (
         "8085",
         &[
             //TODO: jmp into 16/8bit address
-            //"8085",
+            "8085",
         ],
     ),
     (
@@ -189,9 +189,9 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         "AARCH64",
         &[
             //TODO: re-export from a table that also export const
-            //"AARCH64",
-            //"AARCH64BE",
-            //"AARCH64_AppleSilicon",
+            "AARCH64",
+            "AARCH64BE",
+            "AARCH64_AppleSilicon",
         ],
     ),
     (
@@ -205,37 +205,37 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         "Dalvik",
         &[
             //TODO: Cpool
-            //"Dalvik_Base",
-            //"Dalvik_ODEX_KitKat",
-            //"Dalvik_DEX_KitKat",
-            //"Dalvik_DEX_Lollipop",
-            //"Dalvik_DEX_Marshmallow",
-            //"Dalvik_DEX_Nougat",
-            //"Dalvik_DEX_Oreo",
-            //"Dalvik_DEX_Pie",
-            //"Dalvik_DEX_Android10",
-            //"Dalvik_DEX_Android11",
-            //"Dalvik_DEX_Android12",
+            "Dalvik_Base",
+            "Dalvik_ODEX_KitKat",
+            "Dalvik_DEX_KitKat",
+            "Dalvik_DEX_Lollipop",
+            "Dalvik_DEX_Marshmallow",
+            "Dalvik_DEX_Nougat",
+            "Dalvik_DEX_Oreo",
+            "Dalvik_DEX_Pie",
+            "Dalvik_DEX_Android10",
+            "Dalvik_DEX_Android11",
+            "Dalvik_DEX_Android12",
         ],
     ),
     (
         "PowerPC",
         &[
             //TODO: AND-OP a 64bit value with a 32bit variable, outputing a 32bit value
-            //"ppc_32_be",
-            //"ppc_32_le",
-            //"ppc_32_quicciii_be",
-            //"ppc_32_quicciii_le",
-            //"ppc_32_4xx_be",
-            //"ppc_32_4xx_le",
-            //"ppc_64_be",
-            //"ppc_64_le",
-            //"ppc_64_isa_be",
-            //"ppc_64_isa_le",
-            //"ppc_64_isa_altivec_be",
-            //"ppc_64_isa_altivec_le",
-            //"ppc_64_isa_altivec_vle_be",
-            //"ppc_64_isa_vle_be",
+            "ppc_32_be",
+            "ppc_32_le",
+            "ppc_32_quicciii_be",
+            "ppc_32_quicciii_le",
+            "ppc_32_4xx_be",
+            "ppc_32_4xx_le",
+            "ppc_64_be",
+            "ppc_64_le",
+            "ppc_64_isa_be",
+            "ppc_64_isa_le",
+            "ppc_64_isa_altivec_be",
+            "ppc_64_isa_altivec_le",
+            "ppc_64_isa_altivec_vle_be",
+            "ppc_64_isa_vle_be",
         ],
     ),
     (
@@ -250,8 +250,8 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         "Sparc",
         &[
             //TODO: Op 32bits value with Int greater then 32bits
-            //"SparcV9_32",
-            //"SparcV9_64",
+            "SparcV9_32",
+            "SparcV9_64",
         ],
     ),
     (
@@ -269,9 +269,9 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            //"sh-1",
-            //"sh-2",
-            //"sh-2a",
+            "sh-1",
+            "sh-2",
+            "sh-2a",
         ],
     ),
     (
@@ -298,17 +298,17 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
             "pic16c5x",
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            //"pic16",
-            //"pic16f",
-            //"pic17c7xx",
-            //"pic18",
-            //"PIC24E",
-            //"PIC24F",
-            //"PIC24H",
-            //"dsPIC30F",
-            //"dsPIC33C",
-            //"dsPIC33E",
-            //"dsPIC33F",
+            "pic16",
+            "pic16f",
+            "pic17c7xx",
+            "pic18",
+            "PIC24E",
+            "PIC24F",
+            "PIC24H",
+            "dsPIC30F",
+            "dsPIC33C",
+            "dsPIC33E",
+            "dsPIC33F",
         ],
     ),
 ];
@@ -324,6 +324,7 @@ fn parse(arch: &str, variant: &str) -> Result<(), Box<dyn std::error::Error>> {
     let out_file_path = Path::new("/home/rbran/src/sleigh3rust")
         .join(variant.to_lowercase().replace('-', "_"))
         .join("src");
+    std::fs::create_dir_all(&out_file_path).unwrap();
     let out_file_name = out_file_path.join("disassembler.rs");
 
     let mut file = File::create(&out_file_name)?;
