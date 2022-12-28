@@ -62,7 +62,7 @@ impl TableEnum {
                     Rc::clone(constructor),
                     tables,
                     Weak::clone(&self.disassembler),
-                    sleigh.name(),
+                    &from_sleigh(sleigh.name()),
                     index,
                 )
             })
