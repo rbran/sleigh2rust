@@ -362,8 +362,24 @@ impl ToTokens for ContextAccess {
 
         //disassembly function
         match context.meaning() {
-            sleigh_rs::Meaning::Variable(_) => todo!(),
+            //TODO the context is transformed into a value?
             sleigh_rs::Meaning::Value(_, _) => todo!(),
+            //does disassembly returns the raw value? Or this is forbidden?
+            sleigh_rs::Meaning::Variable(_) => {
+                let write = write.as_ref().map(|(_raw, dis, _exe)| {
+                    quote! {
+                        fn #dis(&mut self, _param: #disassembly_type) {
+                            todo!()
+                        }
+                    }
+                });
+                tokens.extend(quote! {
+                    fn #disassembly_read(&self) -> #disassembly_type {
+                        todo!()
+                    }
+                    #write
+                });
+            }
             sleigh_rs::Meaning::Literal(_) | sleigh_rs::Meaning::Name(_) => {
                 let write = write.as_ref().map(|(raw, dis, _exe)| {
                     quote! {
