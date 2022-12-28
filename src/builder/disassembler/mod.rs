@@ -3,6 +3,7 @@ use std::rc::Weak;
 
 use indexmap::IndexMap;
 
+use proc_macro2::Ident;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 
@@ -37,6 +38,7 @@ pub struct Disassembler {
     pub display: Rc<DisplayElement>,
     //all tables, that will implement parser/disassembly/display
     pub tables: IndexMap<*const sleigh_rs::Table, Rc<TableEnum>>,
+    pub addr_type: Ident,
     pub inst_work_type: WorkType,
     //make sure sleigh is not droped, so the inner references are not dropped
     pub sleigh: Rc<sleigh_rs::Sleigh>,
@@ -88,6 +90,7 @@ impl Disassembler {
                 .collect();
             Self {
                 _me: Weak::clone(&me),
+                addr_type: format_ident!("AddrType"),
                 bitrange_rw,
                 memory,
                 global_set,
@@ -126,6 +129,7 @@ impl<'a> ToTokens for Disassembler {
             inst_work_type,
             sleigh,
             _me: _,
+            addr_type,
         } = self;
         let tables_enum = tables.values();
         let display_enum_name = display.name();
@@ -144,6 +148,7 @@ impl<'a> ToTokens for Disassembler {
         let global_set_enum_name = global_set.trait_name();
         //.map(|table| self.gen_table_and_bitches(table));
         tokens.extend(quote! {
+            pub type #addr_type = #inst_work_type;
             #bitrange_rw
             #global_set
             #memory
