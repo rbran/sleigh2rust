@@ -384,7 +384,7 @@ impl ToTokens for ContextAccess {
                 let write = write.as_ref().map(|(raw, dis, _exe)| {
                     quote! {
                         fn #dis(&mut self, param: #disassembly_type) {
-                            self.#raw(#mem_type::try_from(param).unwrap())
+                            self.#raw(param as #mem_type)
                         }
                     }
                 });
