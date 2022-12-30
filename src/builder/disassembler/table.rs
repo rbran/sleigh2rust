@@ -36,7 +36,7 @@ impl TableEnum {
             Self {
                 me: me.clone(),
                 enum_name: format_ident!(
-                    "{}",
+                    "Table{}",
                     from_sleigh(sleigh.name().as_ref())
                 ),
                 parse_fun: format_ident!("parse"),
