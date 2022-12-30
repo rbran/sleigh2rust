@@ -103,7 +103,9 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
         let addr_type = &disassembler.inst_work_type;
         use sleigh_rs::semantic::disassembly::AddrScope::*;
         let address = match &global_set.address {
-            Integer(value) => quote! {(#value as #addr_type)},
+            Integer(value) => {
+                proc_macro2::Literal::u64_unsuffixed(*value).into_token_stream()
+            }
             Varnode(_varnode) => {
                 //TODO solve IntTypeS instead of i64
                 quote! { None }

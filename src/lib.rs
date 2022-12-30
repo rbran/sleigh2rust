@@ -4,6 +4,8 @@ use builder::Disassembler;
 
 use sleigh_rs::semantic::Sleigh;
 
+pub const DISASSEMBLY_ALLOW_OVERFLOW: bool = true;
+
 pub mod builder;
 
 //pub fn emu<'a>(sleigh: &'a Sleigh) -> impl ToTokens + 'a {

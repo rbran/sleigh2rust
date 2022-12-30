@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{quote, ToTokens};
 
 use sleigh_rs::semantic::disassembly::{
     Assertation, Assignment, Expr, ExprElement, GlobalSet, Op, OpUnary,
@@ -10,17 +10,41 @@ use sleigh_rs::semantic::disassembly::{
 use sleigh_rs::semantic::GlobalAnonReference;
 use sleigh_rs::Context;
 
-fn disassembly_op(op: &Op) -> TokenStream {
+fn disassembly_op(x: impl ToTokens, op: &Op, y: impl ToTokens) -> TokenStream {
+    if crate::DISASSEMBLY_ALLOW_OVERFLOW {
+        match op {
+            Op::Add => quote! {#x.wrapping_add(#y)},
+            Op::Sub => quote! {#x.wrapping_sub(#y)},
+            Op::Mul => quote! {#x.wrapping_mul(#y)},
+            Op::Div => quote! {#x.wrapping_div(#y)},
+            Op::Asr => quote! {
+                #x.checked_shr(u32::try_from(#y).unwrap()).unwrap_or(0)
+            },
+            Op::Lsl => quote! {
+                #x.checked_shl(u32::try_from(#y).unwrap()).unwrap_or(0)
+            },
+            Op::And => quote! {(#x & #y)},
+            Op::Or => quote! {(#x | #y)},
+            Op::Xor => quote! {(#x ^ #y)},
+        }
+    } else {
+        match op {
+            Op::Add => quote! {(#x + #y)},
+            Op::Sub => quote! {(#x - #y)},
+            Op::Mul => quote! {(#x * #y)},
+            Op::Div => quote! {(#x / #y)},
+            Op::Asr => quote! {(#x >> #y)},
+            Op::Lsl => quote! {(#x << #y)},
+            Op::And => quote! {(#x & #y)},
+            Op::Or => quote! {(#x | #y)},
+            Op::Xor => quote! {(#x ^ #y)},
+        }
+    }
+}
+fn op_unary(op: &OpUnary, x: impl ToTokens) -> TokenStream {
     match op {
-        Op::Add => quote! {+},
-        Op::Sub => quote! {-},
-        Op::Mul => quote! {*},
-        Op::Div => quote! {/},
-        Op::Asr => quote! {>>},
-        Op::Lsl => quote! {<<},
-        Op::And => quote! {&},
-        Op::Or => quote! {|},
-        Op::Xor => quote! {^},
+        OpUnary::Negation => quote! {(!#x)},
+        OpUnary::Negative => quote! {(-#x)},
     }
 }
 pub trait DisassemblyGenerator<'a> {
@@ -33,12 +57,6 @@ pub trait DisassemblyGenerator<'a> {
     ) -> TokenStream;
     fn new_variable(&self, var: &'a Rc<Variable>) -> TokenStream;
     fn var_name(&self, var: &'a Variable) -> TokenStream;
-    fn op_unary(&self, op: &'a OpUnary) -> TokenStream {
-        match op {
-            OpUnary::Negation => quote! {!},
-            OpUnary::Negative => quote! {-},
-        }
-    }
     fn expr(&self, expr: &'a Expr) -> TokenStream {
         let mut work_stack: Vec<_> = Vec::with_capacity(2);
         for ele in expr.elements().iter() {
@@ -48,15 +66,15 @@ pub trait DisassemblyGenerator<'a> {
                     work_stack.push(self.value(value))
                 }
                 (ExprElement::Op(op), 2..) => {
-                    let op = disassembly_op(op);
                     let y = work_stack.pop().unwrap();
                     let x = work_stack.pop().unwrap();
-                    work_stack.push(quote! {(#x #op #y)});
+                    let op = disassembly_op(x, op, y);
+                    work_stack.push(op);
                 }
                 (ExprElement::OpUnary(op), 1..) => {
-                    let op = self.op_unary(op);
                     let x = work_stack.pop().unwrap();
-                    work_stack.push(quote! {(#op #x)});
+                    let op = op_unary(op, x);
+                    work_stack.push(op);
                 }
                 _ => unreachable!(),
             }
