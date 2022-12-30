@@ -155,7 +155,8 @@ impl TokenParser {
             .token_fields()
             .map(|ass| {
                 let ptr = ass.element_ptr();
-                let name = format_ident!("TokenField{}", from_sleigh(ass.name()));
+                let name =
+                    format_ident!("TokenField{}", from_sleigh(ass.name()));
                 let token = Rc::new(TokenFieldStruct::new(
                     Rc::clone(display),
                     Rc::clone(meanings),

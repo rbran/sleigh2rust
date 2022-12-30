@@ -57,8 +57,8 @@ impl RegistersEnum {
                         TokenField(token_field) => {
                             add_attach(token_field.element().meaning())
                         }
-                        InstStart(_) | InstNext(_)
-                        | Disassembly(_) | Table(_) | Literal(_) => (),
+                        InstStart(_) | InstNext(_) | Disassembly(_)
+                        | Table(_) | Literal(_) => (),
                     }
                 }
             }

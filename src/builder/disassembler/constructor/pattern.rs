@@ -900,7 +900,8 @@ impl<'a, 'b> DisassemblyGenerator<'a> for BlockParserValuesDisassembly<'b> {
         use sleigh_rs::semantic::disassembly::*;
         match value {
             ReadScope::Integer(value) => {
-                proc_macro2::Literal::u64_unsuffixed(*value).into_token_stream()
+                proc_macro2::Literal::i64_suffixed(*value as i64)
+                    .into_token_stream()
             }
             ReadScope::Context(context) => {
                 let context = context.element();

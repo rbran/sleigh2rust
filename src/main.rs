@@ -21,7 +21,7 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         "HCS12",
         &[
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            "HCS12"
+            "HCS12",
         ],
     ),
     (
@@ -33,8 +33,7 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
             //"avr8eind",
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            "avr8",
-            "avr8e",
+            "avr8", "avr8e",
         ],
     ),
     (
@@ -72,8 +71,7 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            "6502",
-            "65c02",
+            "6502", "65c02",
         ],
     ),
     (
@@ -81,8 +79,7 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            "CR16B",
-            "CR16C",
+            "CR16B", "CR16C",
         ],
     ),
     (
@@ -90,8 +87,7 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            "z80",
-            "z180",
+            "z80", "z180",
         ],
     ),
     (
@@ -99,9 +95,7 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            "HC08",
-            "HCS08",
-            "HC05",
+            "HC08", "HCS08", "HC05",
         ],
     ),
     (
@@ -117,9 +111,7 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            "6809",
-            "6805",
-            "H6309",
+            "6809", "6805", "H6309",
         ],
     ),
     (
@@ -160,10 +152,7 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            "80251",
-            "80390",
-            "8051",
-            "mx51",
+            "80251", "80390", "8051", "mx51",
         ],
     ),
     (
@@ -269,9 +258,7 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         &[
             //TODO: bitrange auto adapt to an arbitrary size
             //TODO: Assign values with diferent sizes, eg 8bit value into 16bit variable
-            "sh-1",
-            "sh-2",
-            "sh-2a",
+            "sh-1", "sh-2", "sh-2a",
         ],
     ),
     (

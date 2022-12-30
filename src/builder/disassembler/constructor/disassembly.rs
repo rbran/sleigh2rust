@@ -103,9 +103,8 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
         let addr_type = &disassembler.inst_work_type;
         use sleigh_rs::semantic::disassembly::AddrScope::*;
         let address = match &global_set.address {
-            Integer(value) => {
-                proc_macro2::Literal::u64_unsuffixed(*value).into_token_stream()
-            }
+            Integer(value) => proc_macro2::Literal::i64_suffixed(*value as i64)
+                .into_token_stream(),
             Varnode(_varnode) => {
                 //TODO solve IntTypeS instead of i64
                 quote! { None }
@@ -143,7 +142,10 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
     ) -> TokenStream {
         use sleigh_rs::semantic::disassembly::ReadScope;
         match value {
-            ReadScope::Integer(value) => quote! {(#value as i64)},
+            ReadScope::Integer(value) => {
+                proc_macro2::Literal::i64_suffixed(*value as i64)
+                    .into_token_stream()
+            }
             ReadScope::Context(varnode) => {
                 let sleigh_context = varnode.element();
                 self.context_field(&sleigh_context).to_token_stream()
@@ -276,7 +278,10 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyPattern<'a> {
     ) -> TokenStream {
         use sleigh_rs::semantic::disassembly::ReadScope;
         match value {
-            ReadScope::Integer(value) => quote! {(#value as i64)},
+            ReadScope::Integer(value) => {
+                proc_macro2::Literal::i64_suffixed(*value as i64)
+                    .into_token_stream()
+            }
             ReadScope::Context(varnode) => {
                 let sleigh_context = varnode.element();
                 self.context_field(&sleigh_context).to_token_stream()
