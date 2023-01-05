@@ -184,11 +184,11 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
     fn new_variable(&mut self, var: &'b Rc<Variable>) -> TokenStream {
         let mut vars = self.vars.borrow_mut();
         let ptr: *const Variable = Rc::as_ptr(var);
-        let var_name = format_ident!("{}", from_sleigh(var.name()));
         use indexmap::map::Entry::*;
         match vars.entry(ptr) {
             Occupied(_) => unreachable!("Variable duplicated"),
             Vacant(entry) => {
+                let var_name = format_ident!("calc_{}", from_sleigh(var.name()));
                 let entry =
                     entry.insert(ParsedField::new(var_name, Rc::clone(var)));
                 let name = &entry.name;
@@ -330,11 +330,11 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyPattern<'a> {
 
     fn new_variable(&mut self, var: &'b Rc<Variable>) -> TokenStream {
         let ptr: *const Variable = Rc::as_ptr(var);
-        let var_name = format_ident!("{}", from_sleigh(var.name()));
         use indexmap::map::Entry::*;
         match self.vars.entry(ptr) {
             Occupied(_) => unreachable!("Variable duplicated"),
             Vacant(entry) => {
+                let var_name = format_ident!("calc_{}", from_sleigh(var.name()));
                 let entry =
                     entry.insert(ParsedField::new(var_name, Rc::clone(var)));
                 let name = &entry.name;

@@ -166,12 +166,12 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         "MIPS",
         &[
             //TODO: use value from non export table
-            //"mips32be",
-            //"mips32le",
-            //"mips32R6be",
-            //"mips32R6le",
-            //"mips64be",
-            //"mips64le",
+            "mips32be",
+            "mips32le",
+            "mips32R6be",
+            "mips32R6le",
+            "mips64be",
+            "mips64le",
         ],
     ),
     (
@@ -187,7 +187,7 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         "JVM",
         &[
             //TODO: Cpool
-            //"JVM",
+            "JVM",
         ],
     ),
     (
