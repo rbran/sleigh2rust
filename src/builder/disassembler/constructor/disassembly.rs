@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use sleigh_rs::semantic::disassembly::{GlobalSet, Variable};
+use sleigh_rs::semantic::disassembly::{GlobalSet, Variable, Assertation};
 use sleigh_rs::semantic::{
     GlobalAnonReference, GlobalElement, GlobalReference,
 };
@@ -88,10 +88,23 @@ impl<'a> DisassemblyDisplay<'a> {
 
 impl<'a> ToTokens for DisassemblyDisplay<'a> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        tokens.extend(self.disassembly(
-            &self.constructor.sleigh.disassembly.vars,
-            &self.constructor.sleigh.disassembly.assertations,
-        ));
+        let mut asses = self
+            .constructor
+            .sleigh
+            .pattern
+            .blocks()
+            .iter()
+            .map(|block| match block {
+                sleigh_rs::Block::And { pre, pos, .. } => {
+                    pre.iter().chain(pos.iter())
+                }
+                sleigh_rs::Block::Or { pos, .. } => {
+                    pos.iter().chain([/*LOL*/].iter())
+                }
+            })
+            .flatten()
+            .chain(self.constructor.sleigh.pattern.disassembly_pos_match());
+        tokens.extend(self.disassembly(&mut asses));
     }
 }
 
@@ -168,7 +181,7 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
         quote! {}
     }
 
-    fn new_variable(&self, var: &'b Rc<Variable>) -> TokenStream {
+    fn new_variable(&mut self, var: &'b Rc<Variable>) -> TokenStream {
         let mut vars = self.vars.borrow_mut();
         let ptr: *const Variable = Rc::as_ptr(var);
         let var_name = format_ident!("{}", from_sleigh(var.name()));
@@ -196,11 +209,11 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
 pub struct DisassemblyPattern<'a> {
     pub disassembler: &'a Disassembler,
     pub token_parser: Option<&'a Ident>,
-    pub context_param: &'a Ident,
+    pub context_instance: &'a Ident,
     pub inst_start: &'a Ident,
     pub root_tables: &'a IndexMap<*const sleigh_rs::Table, Ident>,
     pub root_token_fields: &'a IndexMap<*const sleigh_rs::TokenField, Ident>,
-    pub vars: RefCell<IndexMap<*const Variable, ParsedField<Rc<Variable>>>>,
+    pub vars: &'a mut IndexMap<*const Variable, ParsedField<Rc<Variable>>>,
 }
 
 impl<'a> DisassemblyPattern<'a> {
@@ -225,7 +238,10 @@ impl<'a> DisassemblyPattern<'a> {
         self.disassembler
             .memory
             .spaces_trait
-            .build_context_disassembly_read_call(&self.context_param, &context)
+            .build_context_disassembly_read_call(
+                &self.context_instance,
+                &context,
+            )
     }
     fn can_execute(
         &self,
@@ -248,11 +264,9 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyPattern<'a> {
     //TODO identify disassembly that can't be executed separated between pre/pos
     fn disassembly(
         &self,
-        vars: &'b [Rc<Variable>],
-        assertations: &'b [sleigh_rs::semantic::disassembly::Assertation],
+        assertations: &mut dyn Iterator<Item=&Assertation>
     ) -> TokenStream {
         let mut tokens = TokenStream::new();
-        tokens.extend(vars.iter().map(|var| self.new_variable(var)));
         for ass in assertations {
             use sleigh_rs::semantic::disassembly::Assertation::*;
             match ass {
@@ -304,7 +318,7 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyPattern<'a> {
             .memory
             .spaces_trait
             .build_context_disassembly_write_call(
-                &self.context_param,
+                &self.context_instance,
                 &context.element(),
                 &tmp_value,
             );
@@ -314,12 +328,11 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyPattern<'a> {
         }
     }
 
-    fn new_variable(&self, var: &'b Rc<Variable>) -> TokenStream {
-        let mut vars = self.vars.borrow_mut();
+    fn new_variable(&mut self, var: &'b Rc<Variable>) -> TokenStream {
         let ptr: *const Variable = Rc::as_ptr(var);
         let var_name = format_ident!("{}", from_sleigh(var.name()));
         use indexmap::map::Entry::*;
-        match vars.entry(ptr) {
+        match self.vars.entry(ptr) {
             Occupied(_) => unreachable!("Variable duplicated"),
             Vacant(entry) => {
                 let entry =
@@ -333,8 +346,7 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyPattern<'a> {
 
     fn var_name(&self, var: &'b Variable) -> TokenStream {
         let ptr: *const Variable = var;
-        let vars = self.vars.borrow_mut();
-        let var = vars.get(&ptr).unwrap();
+        let var = self.vars.get(&ptr).unwrap();
         var.name().to_token_stream()
     }
 }

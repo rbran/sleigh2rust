@@ -7,7 +7,7 @@ use quote::{format_ident, quote, ToTokens};
 use sleigh_rs::semantic::disassembly::GlobalSet;
 
 use crate::builder::formater::from_sleigh;
-use crate::builder::TokenFieldStruct;
+use crate::builder::{TokenFieldStruct, DisassemblyGenerator};
 
 use super::{Disassembler, TableEnum};
 
@@ -165,7 +165,21 @@ impl ConstructorStruct {
             }
         }
         //also include all the fields requied by the pos disassembly
-        for field in sleigh.disassembly.assertations.iter() {
+        for field in sleigh
+            .pattern
+            .blocks()
+            .iter()
+            .map(|block| match block {
+                sleigh_rs::Block::And { pre, pos, .. } => {
+                    pre.iter().chain(pos.iter())
+                }
+                sleigh_rs::Block::Or { pos, .. } => {
+                    pos.iter().chain([/*LOL*/].iter())
+                }
+            })
+            .flatten()
+            .chain(sleigh.pattern.disassembly_pos_match())
+        {
             use sleigh_rs::semantic::disassembly;
             match field {
                 disassembly::Assertation::GlobalSet(GlobalSet {
@@ -257,7 +271,7 @@ impl ConstructorStruct {
         let inst_work_type = &disassembler.inst_work_type;
 
         use sleigh_rs::semantic::display::DisplayScope;
-        let disassembly = DisassemblyDisplay {
+        let mut disassembly = DisassemblyDisplay {
             constructor: self,
             display_param: &display_param,
             context_param: &context_param,
@@ -266,7 +280,14 @@ impl ConstructorStruct {
             global_set_param: &global_set_param,
             vars: RefCell::new(IndexMap::new()),
         };
-        let disassembly_body = disassembly.to_token_stream();
+        let mut disassembly_body: TokenStream = self
+            .sleigh
+            .pattern
+            .disassembly_vars()
+            .iter()
+            .map(|var| disassembly.new_variable(var))
+            .collect();
+        disassembly_body.extend(disassembly.to_token_stream());
         let displays = self
             .sleigh
             .display

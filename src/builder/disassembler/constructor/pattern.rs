@@ -3,7 +3,9 @@ use std::rc::Rc;
 
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use sleigh_rs::semantic::disassembly::{GlobalSet, Variable};
+use sleigh_rs::semantic::disassembly::{
+    self, Assertation, GlobalSet, Variable,
+};
 use sleigh_rs::semantic::pattern::{
     ProducedTable, ProducedTokenField, Verification,
 };
@@ -13,7 +15,7 @@ use sleigh_rs::{IntTypeU, NonZeroTypeU};
 use crate::builder::formater::from_sleigh;
 use crate::builder::{Disassembler, DisassemblyGenerator};
 
-use super::{ConstructorStruct, DisassemblyPattern, TableField};
+use super::{ConstructorStruct, DisassemblyPattern, ParsedField, TableField};
 
 pub fn root_pattern_function(
     parse_fun: &Ident,
@@ -26,34 +28,37 @@ pub fn root_pattern_function(
     let pattern_len = format_ident!("pattern_len");
     let tokens_current = format_ident!("tokens_current");
     let context_instance = format_ident!("context_instance");
+    let mut disassembly_vars = IndexMap::new();
     let mut root_tables = IndexMap::new();
     let mut root_token_fields = IndexMap::new();
-    let mut blocks_iter =
-        constructor.sleigh.pattern.blocks().iter().enumerate();
 
-    //first block will be parsed with the disassembly
-    let first_block_parse = blocks_iter.next().map(|(index, block)| {
-        body_block(
-            constructor,
-            Some(&constructor.sleigh.disassembly),
-            index,
-            block,
-            &pattern_len,
-            &inst_start,
-            &context_instance,
-            &tokens_current,
-            &IndexMap::new(),
-            &IndexMap::new(),
-            &mut root_tables,
-            &mut root_token_fields,
-        )
-    });
+    //TODO remove this
+    let mut disassembly = DisassemblyPattern {
+        disassembler: &disassembler,
+        token_parser: None,
+        context_instance: &context_instance,
+        inst_start: &inst_start,
+        root_tables: &root_tables,
+        root_token_fields: &root_token_fields,
+        vars: &mut disassembly_vars,
+    };
+    let variables: TokenStream = constructor
+        .sleigh
+        .pattern
+        .disassembly_vars()
+        .iter()
+        .map(|var| disassembly.new_variable(var))
+        .collect();
 
-    let blocks_parse: TokenStream = blocks_iter
+    let blocks_parse: TokenStream = constructor
+        .sleigh
+        .pattern
+        .blocks()
+        .iter()
+        .enumerate()
         .map(|(index, block)| {
             body_block(
                 constructor,
-                None,
                 index,
                 block,
                 &pattern_len,
@@ -62,11 +67,13 @@ pub fn root_pattern_function(
                 &tokens_current,
                 &IndexMap::new(),
                 &IndexMap::new(),
+                &mut disassembly_vars,
                 &mut root_tables,
                 &mut root_token_fields,
             )
         })
         .collect();
+
     let table_fields = root_tables.iter().map(|(ptr, gen_name)| {
         let struct_field = constructor
             .table_fields
@@ -105,7 +112,8 @@ pub fn root_pattern_function(
             let mut #pattern_len = 0 as #inst_work_type;
             let mut #context_instance = context.clone();
 
-            #first_block_parse
+            //disassembly_vars
+            #variables
 
             //the current_token will be increseased by each block, so the
             //next block knows when to start parsing
@@ -114,7 +122,7 @@ pub fn root_pattern_function(
             *context = #context_instance;
             Some((
                 #pattern_len,
-                Self{ #(#fields,)* },
+                Self{ #(#fields),* },
             ))
         }
     }
@@ -124,6 +132,10 @@ fn sub_pattern_closure(
     constructor: &ConstructorStruct,
     pattern: &sleigh_rs::Pattern,
     inst_start: &Ident,
+    disassembly_vars: &mut IndexMap<
+        *const disassembly::Variable,
+        ParsedField<Rc<Variable>>,
+    >,
     root_tables: &IndexMap<*const sleigh_rs::Table, Ident>,
     root_token_fields: &IndexMap<*const sleigh_rs::TokenField, Ident>,
 ) -> TokenStream {
@@ -141,7 +153,6 @@ fn sub_pattern_closure(
         .map(|(index, block)| {
             body_block(
                 constructor,
-                None,
                 index,
                 block,
                 &pattern_len,
@@ -150,6 +161,7 @@ fn sub_pattern_closure(
                 &tokens_current,
                 root_tables,
                 root_token_fields,
+                disassembly_vars,
                 &mut produced_tables,
                 &mut produced_token_fields,
             )
@@ -199,32 +211,8 @@ fn token_parser_creation(
     })
 }
 
-fn disassembly_pre_match(
-    constructor: &ConstructorStruct,
-    disassembly: &sleigh_rs::Disassembly,
-    token_parser: Option<&Ident>,
-    context_param: &Ident,
-    inst_start: &Ident,
-    root_tables: &IndexMap<*const sleigh_rs::Table, Ident>,
-    root_token_fields: &IndexMap<*const sleigh_rs::TokenField, Ident>,
-) -> TokenStream {
-    let disassembler = constructor.disassembler.upgrade().unwrap();
-    let disassembly_pattern = DisassemblyPattern {
-        disassembler: &disassembler,
-        token_parser,
-        context_param,
-        inst_start,
-        root_tables,
-        root_token_fields,
-        vars: std::cell::RefCell::default(),
-    };
-    disassembly_pattern
-        .disassembly(&disassembly.vars, &disassembly.assertations)
-}
-
 fn body_block(
     constructor: &ConstructorStruct,
-    disassembly: Option<&sleigh_rs::Disassembly>,
     block_index: usize,
     block: &sleigh_rs::Block,
     pattern_len: &Ident,
@@ -233,6 +221,10 @@ fn body_block(
     tokens: &Ident,
     root_tables: &IndexMap<*const sleigh_rs::Table, Ident>,
     root_token_fields: &IndexMap<*const sleigh_rs::TokenField, Ident>,
+    disassembly_vars: &mut IndexMap<
+        *const disassembly::Variable,
+        ParsedField<Rc<Variable>>,
+    >,
     produced_tables: &mut IndexMap<*const sleigh_rs::Table, Ident>,
     produced_fields: &mut IndexMap<*const sleigh_rs::TokenField, Ident>,
 ) -> TokenStream {
@@ -243,21 +235,25 @@ fn body_block(
             token_fields,
             tables,
             verifications,
+            pre,
+            pos,
         } => body_block_and(
             constructor,
-            disassembly,
             block_index,
             len,
             *token_len,
             token_fields,
             tables,
             verifications,
+            pre,
+            pos,
             pattern_len,
             inst_start,
             context_param,
             tokens,
             root_tables,
             root_token_fields,
+            disassembly_vars,
             produced_tables,
             produced_fields,
         ),
@@ -266,16 +262,17 @@ fn body_block(
             token_fields,
             tables,
             branches,
+            pos,
         } => {
             let block_closure = block_or_closure(
                 constructor,
-                disassembly,
                 len,
                 token_fields,
                 tables,
                 branches,
                 pattern_len,
                 inst_start,
+                disassembly_vars,
                 root_tables,
                 root_token_fields,
             );
@@ -300,6 +297,17 @@ fn body_block(
             });
             let block_name = format_ident!("block_{}", block_index);
             let block_len = format_ident!("block_{}_len", block_index);
+            let disassembler = constructor.disassembler.upgrade().unwrap();
+            let disassembly = DisassemblyPattern {
+                disassembler: &disassembler,
+                token_parser: None,
+                context_instance: &context_param,
+                inst_start,
+                root_tables,
+                root_token_fields,
+                vars: disassembly_vars,
+            };
+            let disassembly = disassembly.disassembly(&mut pos.iter());
             quote! {
                 let #block_name = #block_closure;
                 let (
@@ -307,6 +315,7 @@ fn body_block(
                     (#(#fields),*),
                     #block_len,
                 ) = #block_name(#tokens, &mut #context_param)?;
+                #disassembly
                 #pattern_len += #block_len;
                 #tokens = &#tokens[usize::try_from(#block_len).unwrap()..];
             }
@@ -316,19 +325,24 @@ fn body_block(
 
 fn body_block_and(
     constructor: &ConstructorStruct,
-    disassembly: Option<&sleigh_rs::Disassembly>,
     block_index: usize,
     len: &sleigh_rs::PatternLen,
     token_len: IntTypeU,
     sleigh_token_fields: &[ProducedTokenField],
     sleigh_tables: &[ProducedTable],
     verifications: &[Verification],
+    pre: &[Assertation],
+    pos: &[Assertation],
     pattern_len: &Ident,
     inst_start: &Ident,
     context: &Ident,
     tokens: &Ident,
     root_tables: &IndexMap<*const sleigh_rs::Table, Ident>,
     root_token_fields: &IndexMap<*const sleigh_rs::TokenField, Ident>,
+    disassembly_vars: &mut IndexMap<
+        *const disassembly::Variable,
+        ParsedField<Rc<Variable>>,
+    >,
     produced_tables: &mut IndexMap<*const sleigh_rs::Table, Ident>,
     produced_token_fields: &mut IndexMap<*const sleigh_rs::TokenField, Ident>,
 ) -> TokenStream {
@@ -338,30 +352,20 @@ fn body_block_and(
 
     let (token_parser, code_pre) = body_block_and_pre(
         constructor,
-        disassembly,
         len,
         token_len,
         sleigh_token_fields,
         sleigh_tables,
         verifications,
+        pre,
         &block_len,
         inst_start,
         root_tables,
         root_token_fields,
+        disassembly_vars,
         &tokens,
         context,
     );
-    let disassembly = disassembly.map(|disassembly| {
-        disassembly_pre_match(
-            constructor,
-            disassembly,
-            token_parser.as_ref(),
-            context,
-            inst_start,
-            root_tables,
-            root_token_fields,
-        )
-    });
     let code_pos = body_block_and_pos(
         constructor,
         len,
@@ -369,10 +373,12 @@ fn body_block_and(
         sleigh_token_fields,
         sleigh_tables,
         verifications,
+        pos,
         &block_len,
         inst_start,
         root_tables,
         root_token_fields,
+        disassembly_vars,
         token_parser.as_ref(),
         &tokens,
         context,
@@ -382,7 +388,6 @@ fn body_block_and(
     quote! {
         let mut #block_len = #token_len as #inst_work_type;
         #code_pre
-        #disassembly
         #code_pos
         #pattern_len += #block_len;
         #tokens = &#tokens[usize::try_from(#block_len).unwrap()..];
@@ -391,16 +396,20 @@ fn body_block_and(
 
 fn body_block_and_pre(
     constructor: &ConstructorStruct,
-    _disassembly: Option<&sleigh_rs::Disassembly>,
     _len: &sleigh_rs::PatternLen,
     token_len: IntTypeU,
     _sleigh_token_fields: &[ProducedTokenField],
     _sleigh_tables: &[ProducedTable],
     verifications: &[Verification],
+    pre: &[Assertation],
     _block_len: &Ident,
     inst_start: &Ident,
-    _root_tables: &IndexMap<*const sleigh_rs::Table, Ident>,
+    root_tables: &IndexMap<*const sleigh_rs::Table, Ident>,
     root_token_fields: &IndexMap<*const sleigh_rs::TokenField, Ident>,
+    vars: &mut IndexMap<
+        *const disassembly::Variable,
+        ParsedField<Rc<Variable>>,
+    >,
     tokens: &Ident,
     context_instance: &Ident,
 ) -> (Option<Ident>, TokenStream) {
@@ -447,11 +456,23 @@ fn body_block_and_pre(
         }
     });
 
+    let disassembly = DisassemblyPattern {
+        disassembler: &disassembler,
+        token_parser: token_parser_name.as_ref(),
+        context_instance,
+        inst_start,
+        root_tables,
+        root_token_fields,
+        vars,
+    };
+    let disassembly = disassembly.disassembly(&mut pre.iter());
+
     let code = quote! {
         #token_parser_code
         #(if #verifications {
             return None;
         })*
+        #disassembly
     };
     (token_parser_name, code)
 }
@@ -463,10 +484,15 @@ fn body_block_and_pos(
     sleigh_token_fields: &[ProducedTokenField],
     _sleigh_tables: &[ProducedTable],
     verifications: &[Verification],
+    pos: &[Assertation],
     block_len: &Ident,
     inst_start: &Ident,
     root_tables: &IndexMap<*const sleigh_rs::Table, Ident>,
     root_token_fields: &IndexMap<*const sleigh_rs::TokenField, Ident>,
+    vars: &mut IndexMap<
+        *const disassembly::Variable,
+        ParsedField<Rc<Variable>>,
+    >,
     token_parser_name: Option<&Ident>,
     tokens: &Ident,
     context_instance: &Ident,
@@ -526,6 +552,7 @@ fn body_block_and_pos(
                     constructor,
                     pattern,
                     inst_start,
+                    vars,
                     root_tables,
                     root_token_fields,
                 );
@@ -590,21 +617,37 @@ fn body_block_and_pos(
                 .or_insert_with(|| token_field_name.clone());
             quote! { let #token_field_name = #token_field; }
         });
+
+    let disassembly = DisassemblyPattern {
+        disassembler: &disassembler,
+        token_parser: token_parser_name,
+        context_instance,
+        inst_start,
+        root_tables,
+        root_token_fields,
+        vars,
+    };
+    let disassembly = disassembly.disassembly(&mut pos.iter());
+
     quote! {
         #verifications
         #(#fields)*
+        #disassembly
     }
 }
 
 fn block_or_closure(
     constructor: &ConstructorStruct,
-    _disassembly: Option<&sleigh_rs::Disassembly>,
     _len: &sleigh_rs::PatternLen,
     sleigh_token_fields: &[ProducedTokenField],
     sleigh_tables: &[ProducedTable],
     branches: &[Verification],
     _block_len: &Ident,
     inst_start: &Ident,
+    vars: &mut IndexMap<
+        *const disassembly::Variable,
+        ParsedField<Rc<Variable>>,
+    >,
     root_tables: &IndexMap<*const sleigh_rs::Table, Ident>,
     root_token_fields: &IndexMap<*const sleigh_rs::TokenField, Ident>,
 ) -> TokenStream {
@@ -717,6 +760,7 @@ fn block_or_closure(
                     constructor,
                     pattern,
                     inst_start,
+                    vars,
                     root_tables,
                     root_token_fields,
                 );
@@ -943,7 +987,7 @@ impl<'a, 'b> DisassemblyGenerator<'a> for BlockParserValuesDisassembly<'b> {
     ) -> TokenStream {
         unreachable!()
     }
-    fn new_variable(&self, _var: &Rc<Variable>) -> TokenStream {
+    fn new_variable(&mut self, _var: &Rc<Variable>) -> TokenStream {
         unreachable!()
     }
     fn var_name(&self, _var: &Variable) -> TokenStream {

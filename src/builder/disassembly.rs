@@ -55,7 +55,7 @@ pub trait DisassemblyGenerator<'a> {
         context: &GlobalAnonReference<Context>,
         value: TokenStream,
     ) -> TokenStream;
-    fn new_variable(&self, var: &'a Rc<Variable>) -> TokenStream;
+    fn new_variable(&mut self, var: &'a Rc<Variable>) -> TokenStream;
     fn var_name(&self, var: &'a Variable) -> TokenStream;
     fn expr(&self, expr: &'a Expr) -> TokenStream {
         let mut work_stack: Vec<_> = Vec::with_capacity(2);
@@ -104,19 +104,15 @@ pub trait DisassemblyGenerator<'a> {
             Local(variable) => self.set_variable(variable, value),
         }
     }
-    fn disassembly(
-        &self,
-        vars: &'a [Rc<Variable>],
-        assertations: &'a [Assertation],
-    ) -> TokenStream {
-        let vars_iter = vars.iter().map(|var| self.new_variable(var));
-        let assertations_iter = assertations.iter().map(|ass| {
-            use sleigh_rs::semantic::disassembly::Assertation::*;
-            match ass {
-                GlobalSet(global) => self.global_set(global),
-                Assignment(ass) => self.assignment(ass),
-            }
-        });
-        vars_iter.chain(assertations_iter).collect()
+    fn disassembly(&self, assertations: &mut dyn Iterator<Item=&'a Assertation>) -> TokenStream {
+        assertations
+            .map(|ass| {
+                use sleigh_rs::semantic::disassembly::Assertation::*;
+                match ass {
+                    GlobalSet(global) => self.global_set(global),
+                    Assignment(ass) => self.assignment(ass),
+                }
+            })
+            .collect()
     }
 }
