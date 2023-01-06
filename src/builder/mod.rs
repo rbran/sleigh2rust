@@ -3,6 +3,7 @@ pub mod formater;
 mod memory;
 use std::rc::Rc;
 
+use ethnum::u256;
 pub use memory::*;
 
 mod token;
@@ -38,11 +39,13 @@ pub enum WorkType {
     U32,
     U64,
     U128,
+    U256,
     I8,
     I16,
     I32,
     I64,
     I128,
+    I256,
     Array(NonZeroTypeU),
 }
 
@@ -54,7 +57,7 @@ impl WorkType {
         let bits = IntTypeU::try_from(IntTypeU::BITS).unwrap();
         Self::new_int_bits(NonZeroTypeU::try_from(bits).unwrap(), signed)
     }
-    pub const fn new_int_bytes(bytes: NonZeroTypeU, signed: bool) -> Self {
+    pub fn new_int_bytes(bytes: NonZeroTypeU, signed: bool) -> Self {
         match bytes.get() {
             0 => unreachable!(),
             1 if signed => Self::I8,
@@ -62,17 +65,18 @@ impl WorkType {
             3..=4 if signed => Self::I32,
             5..=8 if signed => Self::I64,
             9..=16 if signed => Self::I128,
+            17..=32 if signed => Self::I256,
             1 /*if !signed*/ => Self::U8,
             2 /*if !signed*/ => Self::U16,
             3..=4 /*if !signed*/ => Self::U32,
             5..=8 /*if !signed*/ => Self::U64,
             9..=16 /*if !signed*/ => Self::U128,
-            _ => todo!(),
+            17..=32 /*if !signed*/ => Self::U256,
+            x => unreachable!("WorkType bytes: {}", x),
         }
     }
-    pub const fn new_int_bits(bits: NonZeroTypeU, signed: bool) -> Self {
-        let bytes =
-            unsafe { NonZeroTypeU::new_unchecked((bits.get() + 7) / 8) };
+    pub fn new_int_bits(bits: NonZeroTypeU, signed: bool) -> Self {
+        let bytes = NonZeroTypeU::new((bits.get() + 7) / 8).unwrap();
         Self::new_int_bytes(bytes, signed)
     }
     pub fn unsigned_from_bytes(bytes: NonZeroTypeU) -> Self {
@@ -102,12 +106,14 @@ impl WorkType {
             | WorkType::U16
             | WorkType::U32
             | WorkType::U64
-            | WorkType::U128 => false,
+            | WorkType::U128
+            | WorkType::U256 => false,
             WorkType::I8
             | WorkType::I16
             | WorkType::I32
             | WorkType::I64
-            | WorkType::I128 => true,
+            | WorkType::I128
+            | WorkType::I256 => true,
             WorkType::Array(_) => todo!(),
         }
     }
@@ -118,22 +124,45 @@ impl WorkType {
             WorkType::I32 | WorkType::U32 => u32::BITS / 8,
             WorkType::I64 | WorkType::U64 => u64::BITS / 8,
             WorkType::I128 | WorkType::U128 => u128::BITS / 8,
+            WorkType::I256 | WorkType::U256 => u256::BITS / 8,
             WorkType::Array(x) => return *x,
         };
         unsafe { NonZeroTypeU::new_unchecked(bits as IntTypeU) }
     }
-    pub fn to_literal(&self, value: IntTypeU) -> Literal {
+    pub fn to_literal(&self, value: IntTypeU) -> TokenStream {
         match self {
-            WorkType::U8 => Literal::u8_suffixed(value.try_into().unwrap()),
-            WorkType::U16 => Literal::u16_suffixed(value.try_into().unwrap()),
-            WorkType::U32 => Literal::u32_suffixed(value.try_into().unwrap()),
-            WorkType::U64 => Literal::u64_suffixed(value.try_into().unwrap()),
-            WorkType::U128 => Literal::u128_suffixed(value.try_into().unwrap()),
-            WorkType::I8 => Literal::i8_suffixed(value.try_into().unwrap()),
-            WorkType::I16 => Literal::i16_suffixed(value.try_into().unwrap()),
-            WorkType::I32 => Literal::i32_suffixed(value.try_into().unwrap()),
-            WorkType::I64 => Literal::i64_suffixed(value.try_into().unwrap()),
-            WorkType::I128 => Literal::i128_suffixed(value.try_into().unwrap()),
+            WorkType::U8 => Literal::u8_suffixed(value.try_into().unwrap())
+                .to_token_stream(),
+            WorkType::U16 => Literal::u16_suffixed(value.try_into().unwrap())
+                .to_token_stream(),
+            WorkType::U32 => Literal::u32_suffixed(value.try_into().unwrap())
+                .to_token_stream(),
+            WorkType::U64 => Literal::u64_suffixed(value.try_into().unwrap())
+                .to_token_stream(),
+            WorkType::U128 => Literal::u128_suffixed(value.try_into().unwrap())
+                .to_token_stream(),
+            WorkType::U256 => {
+                let value = Literal::u64_suffixed(value);
+                quote! {
+                    ethnum::u256::from(#value)
+                }
+            }
+            WorkType::I8 => Literal::i8_suffixed(value.try_into().unwrap())
+                .to_token_stream(),
+            WorkType::I16 => Literal::i16_suffixed(value.try_into().unwrap())
+                .to_token_stream(),
+            WorkType::I32 => Literal::i32_suffixed(value.try_into().unwrap())
+                .to_token_stream(),
+            WorkType::I64 => Literal::i64_suffixed(value.try_into().unwrap())
+                .to_token_stream(),
+            WorkType::I128 => Literal::i128_suffixed(value.try_into().unwrap())
+                .to_token_stream(),
+            WorkType::I256 => {
+                let value = Literal::u64_suffixed(value);
+                quote! {
+                    ethnum::i256::from(#value)
+                }
+            }
             WorkType::Array(_) => todo!(),
         }
     }
@@ -146,11 +175,13 @@ impl ToTokens for WorkType {
             WorkType::U32 => tokens.extend(quote! {u32}),
             WorkType::U64 => tokens.extend(quote! {u64}),
             WorkType::U128 => tokens.extend(quote! {u128}),
+            WorkType::U256 => tokens.extend(quote! {ethnum::u256}),
             WorkType::I8 => tokens.extend(quote! {i8}),
             WorkType::I16 => tokens.extend(quote! {i16}),
             WorkType::I32 => tokens.extend(quote! {i32}),
             WorkType::I64 => tokens.extend(quote! {i64}),
             WorkType::I128 => tokens.extend(quote! {i128}),
+            WorkType::I256 => tokens.extend(quote! {ethnum::i256}),
             WorkType::Array(len) => {
                 let len: usize = len.get().try_into().unwrap();
                 tokens.extend(quote! {[u8; #len]})
@@ -173,7 +204,7 @@ pub struct BitrangeFromMemory {
 }
 
 impl BitrangeFromMemory {
-    pub const fn new(
+    pub fn new(
         big_endian: bool,
         bitrange_rw: Rc<BitrangeRW>,
         varnode_addr: IntTypeU,
@@ -264,6 +295,8 @@ pub struct BitrangeRW {
     pub read_i64: Ident,
     pub read_u128: Ident,
     pub read_i128: Ident,
+    pub read_u256: Ident,
+    pub read_i256: Ident,
     pub write_u8: Ident,
     pub write_i8: Ident,
     pub write_u16: Ident,
@@ -274,6 +307,8 @@ pub struct BitrangeRW {
     pub write_i64: Ident,
     pub write_u128: Ident,
     pub write_i128: Ident,
+    pub write_u256: Ident,
+    pub write_i256: Ident,
 }
 impl BitrangeRW {
     pub fn new() -> Self {
@@ -288,6 +323,8 @@ impl BitrangeRW {
             read_i64: format_ident!("read_i64"),
             read_u128: format_ident!("read_u128"),
             read_i128: format_ident!("read_i128"),
+            read_u256: format_ident!("read_u256"),
+            read_i256: format_ident!("read_i256"),
             write_u8: format_ident!("write_u8"),
             write_i8: format_ident!("write_i8"),
             write_u16: format_ident!("write_u16"),
@@ -298,6 +335,8 @@ impl BitrangeRW {
             write_i64: format_ident!("write_i64"),
             write_u128: format_ident!("write_u128"),
             write_i128: format_ident!("write_i128"),
+            write_u256: format_ident!("write_u256"),
+            write_i256: format_ident!("write_i256"),
         }
     }
     pub fn read_function(&self, work_type: &WorkType) -> &Ident {
@@ -307,11 +346,13 @@ impl BitrangeRW {
             WorkType::U32 => &self.read_u32,
             WorkType::U64 => &self.read_u64,
             WorkType::U128 => &self.read_u128,
+            WorkType::U256 => &self.read_u256,
             WorkType::I8 => &self.read_i8,
             WorkType::I16 => &self.read_i16,
             WorkType::I32 => &self.read_i32,
             WorkType::I64 => &self.read_i64,
             WorkType::I128 => &self.read_i128,
+            WorkType::I256 => &self.read_i256,
             WorkType::Array(_) => todo!(),
         }
     }
@@ -322,11 +363,13 @@ impl BitrangeRW {
             WorkType::U32 => &self.write_u32,
             WorkType::U64 => &self.write_u64,
             WorkType::U128 => &self.write_u128,
+            WorkType::U256 => &self.write_u256,
             WorkType::I8 => &self.write_i8,
             WorkType::I16 => &self.write_i16,
             WorkType::I32 => &self.write_i32,
             WorkType::I64 => &self.write_i64,
             WorkType::I128 => &self.write_i128,
+            WorkType::I256 => &self.write_i256,
             WorkType::Array(_) => todo!(),
         }
     }
@@ -345,6 +388,8 @@ impl ToTokens for BitrangeRW {
             read_i64,
             read_u128,
             read_i128,
+            read_u256,
+            read_i256,
             write_u8,
             write_i8,
             write_u16,
@@ -355,6 +400,8 @@ impl ToTokens for BitrangeRW {
             write_i64,
             write_u128,
             write_i128,
+            write_u256,
+            write_i256,
         } = self;
         //FUTURE, instead of impl for all types, use generics with const impl
         //AKA: `~const Add + ~const Sub`
@@ -369,7 +416,7 @@ impl ToTokens for BitrangeRW {
                     $write_unsigned:ident,
                     $write_signed:ident
                 ) => {
-                    const fn $read_unsigned<const BIG_ENDIAN: bool>(
+                    fn $read_unsigned<const BIG_ENDIAN: bool>(
                         data: [u8; $len],
                         start_bit: usize,
                         len_bits: usize,
@@ -388,7 +435,7 @@ impl ToTokens for BitrangeRW {
                         data = data & value_mask;
                         data
                     }
-                    const fn $read_signed<const BIG_ENDIAN: bool>(
+                    fn $read_signed<const BIG_ENDIAN: bool>(
                         data: [u8; $len],
                         start_bit: usize,
                         len_bits: usize,
@@ -398,18 +445,19 @@ impl ToTokens for BitrangeRW {
                         assert!(TYPE_BITS / 8 == $len);
                         let data = $read_unsigned::<BIG_ENDIAN>(data, start_bit, len_bits);
                         let value_mask =
-                            <$signed_type>::MAX as $unsigned_type >> (TYPE_BITS - len_bits);
+                            <$unsigned_type>::try_from(<$signed_type>::MAX).unwrap()  >> (TYPE_BITS - len_bits);
                         let sign_mask = !value_mask;
                         let value_part = data & value_mask;
                         let sign_part = data & sign_mask;
+                        //TODO: make better makeshift `as` that also works with u256
                         if sign_part != 0 {
-                            //put the value, fill the rest with ones
-                            sign_mask as $signed_type | value_part as $signed_type
+                            let neg_value = (!value_part + 1) & value_mask;
+                            <$signed_type>::try_from(neg_value).unwrap().checked_neg().unwrap()
                         } else {
-                            data as $signed_type
+                            <$signed_type>::try_from(value_part).unwrap()
                         }
                     }
-                    const fn $write_unsigned<const BIG_ENDIAN: bool>(
+                    fn $write_unsigned<const BIG_ENDIAN: bool>(
                         value: $unsigned_type,
                         mem: $unsigned_type,
                         start_bit: usize,
@@ -431,7 +479,7 @@ impl ToTokens for BitrangeRW {
                             value.to_le_bytes()
                         }
                     }
-                    const fn $write_signed<const BIG_ENDIAN: bool>(
+                    fn $write_signed<const BIG_ENDIAN: bool>(
                         value: $signed_type,
                         mem: $signed_type,
                         start_bit: usize,
@@ -440,14 +488,25 @@ impl ToTokens for BitrangeRW {
                         const TYPE_BITS: usize = <$unsigned_type>::BITS as usize;
                         assert!(len_bits > 0);
                         assert!(len_bits + start_bit <= TYPE_BITS);
-                        let value_max = <$signed_type>::MAX >> (TYPE_BITS - len_bits);
-                        let value_min = <$signed_type>::MIN >> (TYPE_BITS - len_bits);
                         //NOTE context write can overflow
+                        //let value_max = <$signed_type>::MAX >> (TYPE_BITS - len_bits);
+                        //let value_min = <$signed_type>::MIN >> (TYPE_BITS - len_bits);
                         //assert!(value <= value_max);
                         //assert!(value >= value_min);
+                        //TODO: make better makeshift `as` that also works with u256
+                        let value: $unsigned_type = if value < 0 {
+                            <$unsigned_type>::MAX - <$unsigned_type>::try_from(value.abs() - 1).unwrap()
+                        } else {
+                            <$unsigned_type>::try_from(value).unwrap()
+                        };
+                        let mem: $unsigned_type = if mem < 0 {
+                            <$unsigned_type>::MAX - <$unsigned_type>::try_from(mem.abs() - 1).unwrap()
+                        } else {
+                            <$unsigned_type>::try_from(value).unwrap()
+                        };
+
                         let mask = <$unsigned_type>::MAX >> (TYPE_BITS - len_bits);
-                        let value = value as $unsigned_type & mask;
-                        let mem = mem as $unsigned_type;
+                        let value = value & mask;
                         $write_unsigned::<BIG_ENDIAN>(value, mem, start_bit, len_bits)
                     }
                 };
@@ -457,6 +516,7 @@ impl ToTokens for BitrangeRW {
             impl_read_to_type!(u32, i32, 4, #read_u32, #read_i32, #write_u32, #write_i32);
             impl_read_to_type!(u64, i64, 8, #read_u64, #read_i64, #write_u64, #write_i64);
             impl_read_to_type!(u128, i128, 16, #read_u128, #read_i128, #write_u128, #write_i128);
+            impl_read_to_type!(ethnum::u256, ethnum::i256, 32, #read_u256, #read_i256, #write_u256, #write_i256);
         });
     }
 }
