@@ -124,7 +124,7 @@ impl ToTokens for TableEnum {
         let variants_parser_fun =
             constructors.iter().map(|con| &con.parser_fun);
         let inst_work_type = &disassembler.inst_work_type;
-        let global_set_enum = disassembler.global_set.trait_name();
+        let global_set_enum = disassembler.global_set_trait.trait_name();
         let context_trait_name = &disassembler.memory.spaces_trait.name;
         tokens.extend(quote! {
             #(#constructors_structs)*

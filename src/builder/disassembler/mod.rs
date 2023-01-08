@@ -7,6 +7,7 @@ use proc_macro2::Ident;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 
+use super::GlobalSetStruct;
 use super::{
     BitrangeRW, DisassemblerMemory, DisplayElement, GlobalSetTrait, Meanings,
     RegistersEnum, TokenParser, WorkType,
@@ -33,7 +34,8 @@ pub struct Disassembler {
     //a basic trait/struct that store all the context variables from all spaces
     pub memory: DisassemblerMemory,
     //abstraction for the `global_set` call that happen in disassembly_pos
-    pub global_set: GlobalSetTrait,
+    pub global_set_trait: Rc<GlobalSetTrait>,
+    pub global_set_struct: GlobalSetStruct,
     //all possible display elements: Literal/Register/Value
     pub display: Rc<DisplayElement>,
     //all tables, that will implement parser/disassembly/display
@@ -75,9 +77,14 @@ impl Disassembler {
         ));
         let inst_work_type =
             WorkType::new_int_bytes(sleigh.addr_len_bytes(), false);
-        let global_set = GlobalSetTrait::new(&sleigh);
+        let global_set_trait = Rc::new(GlobalSetTrait::new(&sleigh));
 
         let me = Rc::new_cyclic(|me| {
+            let global_set_struct = GlobalSetStruct::new(
+                Weak::clone(&me),
+                Rc::clone(&global_set_trait),
+                Rc::clone(&memory.spaces_trait),
+            );
             let tables: IndexMap<*const _, Rc<TableEnum>> = sleigh
                 .tables()
                 .map(|table| {
@@ -93,7 +100,8 @@ impl Disassembler {
                 addr_type: format_ident!("AddrType"),
                 bitrange_rw,
                 memory,
-                global_set,
+                global_set_trait,
+                global_set_struct,
                 display,
                 registers,
                 tables,
@@ -123,7 +131,8 @@ impl<'a> ToTokens for Disassembler {
             bitrange_rw,
             token_parser,
             memory,
-            global_set,
+            global_set_trait,
+            global_set_struct,
             display,
             tables,
             inst_work_type,
@@ -145,12 +154,13 @@ impl<'a> ToTokens for Disassembler {
         let instruction_table_name = &instruction_table.enum_name;
         let instruction_table_parse = &instruction_table.parse_fun;
         let instruction_table_display = &instruction_table.display_fun;
-        let global_set_enum_name = global_set.trait_name();
+        let global_set_enum_name = global_set_trait.trait_name();
         //.map(|table| self.gen_table_and_bitches(table));
         tokens.extend(quote! {
             pub type #addr_type = #inst_work_type;
             #bitrange_rw
-            #global_set
+            #global_set_trait
+            #global_set_struct
             #memory
             #meanings
             #token_parser

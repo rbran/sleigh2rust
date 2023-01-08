@@ -1,3 +1,5 @@
+use std::rc::{Rc, Weak};
+
 use indexmap::IndexMap;
 
 use proc_macro2::{Ident, TokenStream};
@@ -6,24 +8,103 @@ use quote::{format_ident, quote};
 use sleigh_rs::semantic::GlobalAnonReference;
 use sleigh_rs::semantic::GlobalElement;
 
-use super::formater::*;
-use super::WorkType;
+use super::{formater::*, SpacesTrait};
+use super::{Disassembler, WorkType};
 
 #[derive(Debug, Clone)]
 pub struct GlobalSetContext {
     function: Ident,
-    _sleigh: GlobalAnonReference<sleigh_rs::Context>,
+    sleigh: GlobalAnonReference<sleigh_rs::Context>,
 }
 impl GlobalSetContext {
     pub fn new(context: &GlobalElement<sleigh_rs::Context>) -> Self {
         let function = format_ident!("set_{}", from_sleigh(context.name()));
         Self {
             function,
-            _sleigh: context.reference(),
+            sleigh: context.reference(),
         }
     }
     pub fn function(&self) -> &Ident {
         &self.function
+    }
+}
+
+#[derive(Debug)]
+pub struct GlobalSetStruct {
+    disassembler: Weak<Disassembler>,
+    global_set_trait: Rc<GlobalSetTrait>,
+    context_trait: Rc<SpacesTrait>,
+    name: Ident,
+}
+impl GlobalSetStruct {
+    pub fn new(
+        disassembler: Weak<Disassembler>,
+        global_set_trait: Rc<GlobalSetTrait>,
+        context_trait: Rc<SpacesTrait>,
+    ) -> Self {
+        let name = format_ident!("GlobalSetDefault");
+        Self {
+            disassembler,
+            global_set_trait,
+            context_trait,
+            name,
+        }
+    }
+}
+impl ToTokens for GlobalSetStruct {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let Self {
+            disassembler,
+            name,
+            context_trait,
+            global_set_trait,
+        } = self;
+        let disassembler = disassembler.upgrade().unwrap();
+        let addr_type = &disassembler.addr_type;
+        let global_set_trait_name = &global_set_trait.name;
+        let (gen_declaration, gen_use, struct_data) = if global_set_trait
+            .varnodes
+            .is_empty()
+        {
+            (None, None, None)
+        } else {
+            let gen_type = format_ident!("C");
+            let context_trait_name = &context_trait.name;
+            let gen_declaration = quote! {<#gen_type: #context_trait_name>};
+            let gen_use = quote! {<#gen_type>};
+            let struct_data = quote! {
+                #gen_declaration(pub std::collections::HashMap<#addr_type, #gen_type>)
+            };
+            (Some(gen_declaration), Some(gen_use), Some(struct_data))
+        };
+        let functions = global_set_trait.varnodes.values().map(|gs_context| {
+            let int_type = WorkType::int_type(true);
+            let name = &gs_context.function;
+            let context = gs_context.sleigh.element();
+            let context_space = context.varnode().space();
+            let context_space = self.context_trait.spaces.get(&context_space.element_ptr()).unwrap();
+            let context_space_fun = context_space.function_mut.as_ref().unwrap();
+            let write_context_fun = &context_space.type_trait.contexts.get(&context.element_ptr()).unwrap().write.as_ref().unwrap().1;
+            quote!{
+                fn #name(&mut self, inst_start: Option<#addr_type>, value: #int_type) {
+                    let Some(inst_start) = inst_start else {
+                        return
+                    };
+                    self.0.entry(inst_start).or_insert_with(|| {
+                        let mut context = C::default();
+                        context.#context_space_fun().#write_context_fun(value);
+                        context
+                    });
+                }
+            }
+        });
+        tokens.extend(quote! {
+            #[derive(Default)]
+            pub struct #name #struct_data;
+            impl #gen_declaration #global_set_trait_name for #name #gen_use {
+                #(#functions)*
+            }
+        })
     }
 }
 

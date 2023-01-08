@@ -796,7 +796,7 @@ impl ToTokens for SpacesTrait {
             }
         });
         tokens.extend(quote! {
-            pub trait #name {
+            pub trait #name: Default {
                 #(#spaces)*
             }
         })

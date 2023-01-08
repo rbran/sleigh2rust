@@ -112,7 +112,7 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
     fn global_set(&self, global_set: &'b GlobalSet) -> TokenStream {
         let sleigh_context = global_set.context().element();
         let disassembler = self.constructor.disassembler.upgrade().unwrap();
-        let context = disassembler.global_set.context(sleigh_context.element());
+        let context = disassembler.global_set_trait.context(sleigh_context.element());
         let addr_type = &disassembler.inst_work_type;
         use sleigh_rs::semantic::disassembly::AddrScope::*;
         let address = match &global_set.address {
