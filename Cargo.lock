@@ -114,6 +114,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "sleigh-rs",
+ "sleigh4rust",
+]
+
+[[package]]
+name = "sleigh4rust"
+version = "0.1.0"
+dependencies = [
+ "ethnum",
 ]
 
 [[package]]

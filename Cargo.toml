@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 sleigh-rs = { "path"= "../sleigh-rs" }
+sleigh4rust = { "path"= "../sleigh4rust" }
 quote = "1"
 bitvec = "1"
 proc-macro2 = "1"

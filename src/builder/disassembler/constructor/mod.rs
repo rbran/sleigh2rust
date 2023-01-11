@@ -7,7 +7,7 @@ use quote::{format_ident, quote, ToTokens};
 use sleigh_rs::semantic::disassembly::GlobalSet;
 
 use crate::builder::formater::from_sleigh;
-use crate::builder::{TokenFieldStruct, DisassemblyGenerator};
+use crate::builder::{DisassemblyGenerator, TokenFieldStruct};
 
 use super::{Disassembler, TableEnum};
 

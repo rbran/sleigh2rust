@@ -231,8 +231,7 @@ const ARCH_FILES: &[(&str, &[&str])] = &[
         "x86",
         &[
             //TODO: Jmp into a 16bit address
-            "x86",
-            "x86-64",
+            "x86", "x86-64",
         ],
     ),
     (

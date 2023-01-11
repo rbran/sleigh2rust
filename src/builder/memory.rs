@@ -2,21 +2,17 @@ use indexmap::IndexMap;
 use std::ops::Range;
 use std::rc::Rc;
 
-use proc_macro2::{Ident, Literal, TokenStream};
+use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use sleigh_rs::semantic::{GlobalAnonReference, GlobalElement};
 use sleigh_rs::{IntTypeU, NonZeroTypeU};
 
 use crate::builder::formater::*;
 
-use super::{
-    BitrangeFromMemory, BitrangeRW, DisplayElement, Meanings, WorkType,
-};
+use super::{DisplayElement, Meanings, ToLiteral, WorkType};
 
 #[derive(Debug, Clone)]
 pub struct DisassemblerMemory {
-    pub memory_read_trait: Rc<MemoryAccessTrait>,
-    pub memory_write_trait: Rc<MemoryAccessTrait>,
     pub space_traits: IndexMap<*const sleigh_rs::Space, Rc<SpaceTrait>>,
     pub space_structs: IndexMap<*const sleigh_rs::Space, Rc<SpaceStruct>>,
     pub spaces_trait: Rc<SpacesTrait>,
@@ -25,14 +21,10 @@ pub struct DisassemblerMemory {
 
 impl DisassemblerMemory {
     pub fn new(
-        bitrange_rw: &Rc<BitrangeRW>,
         display_element: &Rc<DisplayElement>,
         meanings: &Rc<Meanings>,
         sleigh: &sleigh_rs::Sleigh,
     ) -> Self {
-        let memory_read_trait = MemoryAccessTrait::new_read();
-        let memory_write_trait = MemoryAccessTrait::new_write();
-
         //in disasembly we only care about space that contains contexts
         let spaces: Box<[GlobalElement<sleigh_rs::Space>]> = sleigh
             .contexts()
@@ -49,7 +41,6 @@ impl DisassemblerMemory {
                 .map(|space| {
                     let ptr = space.element_ptr();
                     let space_trait = SpaceTrait::new(
-                        bitrange_rw,
                         sleigh.endian().is_big(),
                         display_element,
                         meanings,
@@ -64,10 +55,6 @@ impl DisassemblerMemory {
                             context.varnode().space().element_ptr()
                                 == space.element_ptr()
                         }),
-                        Rc::clone(&memory_read_trait),
-                        space
-                            .can_write()
-                            .then(|| Rc::clone(&memory_write_trait)),
                     );
                     (ptr, space_trait)
                 })
@@ -98,8 +85,6 @@ impl DisassemblerMemory {
                                 offset: context.varnode().offset,
                                 len: context.varnode().len_bytes,
                             }),
-                        &memory_read_trait,
-                        &memory_write_trait,
                     );
                     (ptr, space_struct)
                 })
@@ -108,8 +93,6 @@ impl DisassemblerMemory {
         let spaces_struct =
             SpacesStruct::new(Rc::clone(&spaces_trait), space_structs.values());
         Self {
-            memory_read_trait,
-            memory_write_trait,
             space_traits,
             space_structs,
             spaces_trait,
@@ -121,8 +104,6 @@ impl DisassemblerMemory {
 impl ToTokens for DisassemblerMemory {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let Self {
-            memory_read_trait,
-            memory_write_trait,
             space_traits,
             space_structs,
             spaces_trait,
@@ -131,8 +112,6 @@ impl ToTokens for DisassemblerMemory {
         let space_traits = space_traits.values();
         let space_structs = space_structs.values();
         tokens.extend(quote! {
-            #memory_read_trait
-            #memory_write_trait
             #(#space_traits)*
             #spaces_trait
             #(#space_structs)*
@@ -141,50 +120,6 @@ impl ToTokens for DisassemblerMemory {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct MemoryAccessTrait {
-    pub name: Ident,
-    pub address_type: Ident,
-    pub function: Ident,
-    pub write: bool,
-}
-impl MemoryAccessTrait {
-    pub fn new_read() -> Rc<Self> {
-        Rc::new(Self {
-            name: format_ident!("MemoryRead"),
-            address_type: format_ident!("AddressType"),
-            function: format_ident!("read"),
-            write: false,
-        })
-    }
-    pub fn new_write() -> Rc<Self> {
-        Rc::new(Self {
-            name: format_ident!("MemoryWrite"),
-            address_type: format_ident!("AddressType"),
-            function: format_ident!("write"),
-            write: true,
-        })
-    }
-}
-impl ToTokens for MemoryAccessTrait {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let name = &self.name;
-        let address_type = &self.address_type;
-        let function = &self.function;
-        let self_mut = self.write.then(|| quote! {mut});
-        let buf_mut = (!self.write).then(|| quote! {mut});
-        tokens.extend(quote! {
-            pub trait #name {
-                type #address_type;
-                fn #function(
-                    &#self_mut self,
-                    addr: Self::#address_type,
-                    buf: &#buf_mut [u8],
-                );
-            }
-        })
-    }
-}
 #[derive(Debug, Clone)]
 pub struct SpaceTraitElement<T: Clone + std::fmt::Debug> {
     pub function_read: Ident,
@@ -203,7 +138,6 @@ impl<'a, T: Clone + std::fmt::Debug> SpaceTraitElement<T> {
 }
 #[derive(Debug, Clone)]
 pub struct ContextAccess {
-    bitrange_rw: Rc<BitrangeRW>,
     big_endian: bool,
     display_element: Rc<DisplayElement>,
     meanings: Rc<Meanings>,
@@ -222,13 +156,11 @@ impl ContextAccess {
         context: &GlobalElement<sleigh_rs::Context>,
         display_element: Rc<DisplayElement>,
         meanings: Rc<Meanings>,
-        bitrange_rw: Rc<BitrangeRW>,
         big_endian: bool,
     ) -> Self {
         let name = from_sleigh(context.name());
         let write = context.varnode().space().can_write();
         Self {
-            bitrange_rw,
             big_endian,
 
             display_element,
@@ -255,7 +187,6 @@ impl ContextAccess {
 impl ToTokens for ContextAccess {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let Self {
-            bitrange_rw,
             big_endian,
             display_element,
             meanings,
@@ -274,88 +205,49 @@ impl ToTokens for ContextAccess {
         let varnode = context.varnode();
         let range = context.range();
         let bit_len = range.n_bits;
+        let start_bit = range.lsb_bit.unsuffixed();
+        let len_bits = range.n_bits.get().unsuffixed();
         let signed = context.meaning().is_signed();
 
-        let varnode_addr = varnode.offset();
-        let varnode_len = context.varnode().len_bytes();
+        let varnode_addr = varnode.offset().unsuffixed();
+        let varnode_len = context.varnode().len_bytes().get().unsuffixed();
 
-        let bitrange_from_varnode = BitrangeFromMemory::new(
-            *big_endian,
-            Rc::clone(bitrange_rw),
-            varnode_addr,
-            varnode_len,
-            range.lsb_bit,
-            bit_len,
-            signed,
-        );
-        let addr_type =
-            WorkType::new_int_bytes(varnode.space().addr_size, false);
         let disassembly_type = WorkType::int_type(true);
 
-        //raw function
-        let read =
-            |work_value: &Ident, read_bytes: NonZeroTypeU, addr, work_start| {
-                let work_start = usize::try_from(work_start).unwrap();
-                let work_end =
-                    work_start + usize::try_from(read_bytes.get()).unwrap();
-                let work_end = Literal::usize_unsuffixed(work_end);
-                let work_start = Literal::usize_unsuffixed(work_start);
-                quote! {
-                    self.read(
-                        #addr as #addr_type,
-                        &mut #work_value[#work_start..#work_end],
-                    );
-                }
-            };
-        let mem_type = bitrange_from_varnode.return_type();
-        let read_bitrange = bitrange_from_varnode.read_value(read);
+        let work_type = WorkType::new_int_bits(
+            NonZeroTypeU::new(range.n_bits.get() + range.lsb_bit).unwrap(),
+            signed,
+        );
+        let param_type = WorkType::new_int_bits(bit_len, signed);
         let write_functions = write.as_ref().map(|(raw, _dis, _exe)| {
-            let param_type = &bitrange_from_varnode.work_type;
-            let write_bitrange_fun = bitrange_rw.write_function(param_type);
-            let bit_start = bitrange_from_varnode.bit_start;
-            let bit_len = bitrange_from_varnode.bit_len.get();
-            let addr = bitrange_from_varnode.mem_start;
-            let work_len = usize::try_from(
-                bitrange_from_varnode.work_type.len_bytes().get(),
-            )
-            .unwrap();
-            let work_start =
-                usize::try_from(bitrange_from_varnode.work_start).unwrap();
-            let work_end = work_start
-                + usize::try_from(bitrange_from_varnode.read_bytes.get())
-                    .unwrap();
-            let work_end = Literal::usize_unsuffixed(work_end);
-            let work_len = Literal::usize_unsuffixed(work_len);
-            let work_start = Literal::usize_unsuffixed(work_start);
-            let endian = if self.big_endian {
-                quote! {from_be_bytes}
-            } else {
-                quote! {from_le_bytes}
-            };
+            let write_work_type = work_type.sleigh4rust_write_memory();
             quote! {
-                fn #raw(&mut self, param: #mem_type) {
-                    let mut mem = [0u8; #work_len];
-                    self.read(
-                        #addr as #addr_type,
-                        &mut mem[#work_start..#work_end],
-                    );
-                    let mem = #param_type::#endian(mem);
-                    let mem = #write_bitrange_fun::<#big_endian>(
-                        param as #param_type,
-                        mem,
-                        #bit_start as usize,
-                        #bit_len as usize,
-                    );
-                    self.write(
-                        #addr as #addr_type,
-                        &mem[#work_start..#work_end],
-                    );
+                fn #raw(
+                    &mut self,
+                    param: #param_type,
+                )-> Result<(), MemoryWriteError<Self::AddressType>> {
+                    self.#write_work_type::<#big_endian>(
+                        #work_type::from(param),
+                        #varnode_addr,
+                        #varnode_len,
+                        #start_bit,
+                        #len_bits,
+                    )
                 }
             }
         });
+        let read_work_type = work_type.sleigh4rust_read_memory();
         tokens.extend(quote! {
-            fn #raw_read(&self) -> #mem_type {
-                #read_bitrange
+            fn #raw_read(
+                &self,
+            ) -> Result<#param_type, MemoryReadError<Self::AddressType>> {
+                let work_value = self.#read_work_type::<#big_endian>(
+                    #varnode_addr,
+                    #varnode_len,
+                    #start_bit,
+                    #len_bits,
+                )?;
+                Ok(#param_type::try_from(work_value).unwrap())
             }
             #write_functions
         });
@@ -368,13 +260,18 @@ impl ToTokens for ContextAccess {
             sleigh_rs::Meaning::Variable(_) => {
                 let write = write.as_ref().map(|(_raw, dis, _exe)| {
                     quote! {
-                        fn #dis(&mut self, _param: #disassembly_type) {
+                        fn #dis(
+                            &mut self,
+                            _param: #disassembly_type,
+                        ) -> Result<(), MemoryWriteError<Self::AddressType>> {
                             todo!()
                         }
                     }
                 });
                 tokens.extend(quote! {
-                    fn #disassembly_read(&self) -> #disassembly_type {
+                    fn #disassembly_read(
+                        &self,
+                    ) -> Result<#disassembly_type, MemoryReadError<Self::AddressType>> {
                         todo!()
                     }
                     #write
@@ -383,14 +280,20 @@ impl ToTokens for ContextAccess {
             sleigh_rs::Meaning::Literal(_) | sleigh_rs::Meaning::Name(_) => {
                 let write = write.as_ref().map(|(raw, dis, _exe)| {
                     quote! {
-                        fn #dis(&mut self, param: #disassembly_type) {
-                            self.#raw(param as #mem_type)
+                        fn #dis(
+                            &mut self,
+                            param: #disassembly_type,
+                        ) -> Result<(), MemoryWriteError<Self::AddressType>> {
+                            self.#raw(#param_type::try_from(param).unwrap())
                         }
                     }
                 });
                 tokens.extend(quote! {
-                    fn #disassembly_read(&self) -> #disassembly_type {
-                        #disassembly_type::try_from(self.#raw_read()).unwrap()
+                    fn #disassembly_read(
+                        &self,
+                    ) -> Result<#disassembly_type, MemoryReadError<Self::AddressType>> {
+                        let raw_value = self.#raw_read()?;
+                        Ok(#disassembly_type::try_from(raw_value).unwrap())
                     }
                     #write
                 });
@@ -407,18 +310,23 @@ impl ToTokens for ContextAccess {
                 let index_type = &vars.index_type;
                 let write = write.as_ref().map(|(_raw, _dis, exe)| {
                     quote! {
-                        fn #exe(&mut self, param: #exec_type) {
+                        fn #exe(
+                            &mut self,
+                            param: #exec_type,
+                        ) -> Result<(), MemoryWriteError<Self::AddressType>> {
                             let varnode = #function(
-                                #index_type::try_from(self.#raw_read()).unwrap()
+                                #index_type::try_from(self.#raw_read()?).unwrap()
                             );
                             todo!("Write {} into the varnode {}", param, varnode)
                         }
                     }
                 });
                 tokens.extend(quote! {
-                    fn #execution_read(&self) -> #exec_type {
+                    fn #execution_read(
+                        &self,
+                    ) -> Result<#exec_type, MemoryReadError<Self::AddressType>> {
                         let varnode = #function(
-                            #index_type::try_from(self.#raw_read()).unwrap()
+                            #index_type::try_from(self.#raw_read()?).unwrap()
                         );
                         todo!("Read from the varnode {}", varnode)
                     }
@@ -437,20 +345,26 @@ impl ToTokens for ContextAccess {
                 let write = write.as_ref().map(|(_raw, _dis, exe)| {
                     let todo_msg = format!(
                         "The param is the mem_type ({}) or value_type ({})?",
-                        mem_type.into_token_stream().to_string(),
+                        param_type.into_token_stream().to_string(),
                         value_type.into_token_stream().to_string()
                     );
                     quote! {
-                        fn #exe(&mut self, param: ()) {
+                        fn #exe(
+                            &mut self,
+                            param: (),
+                        ) -> Result<(), MemoryWriteError<Self::AddressType>> {
                             todo!(#todo_msg)
                         }
                     }
                 });
                 tokens.extend(quote! {
-                    fn #execution_read(&self) -> #value_type {
-                        #value_func(
-                            #index_type::try_from(self.#raw_read()).unwrap()
-                        )
+                    fn #execution_read(
+                        &self,
+                    ) -> Result<#value_type, MemoryReadError<Self::AddressType>> {
+                        let raw_value = self.#raw_read()?;
+                        Ok(#value_func(
+                            #index_type::try_from(raw_value).unwrap()
+                        ))
                     }
                     #write
                 });
@@ -458,13 +372,18 @@ impl ToTokens for ContextAccess {
             sleigh_rs::Meaning::Literal(_) | sleigh_rs::Meaning::Name(_) => {
                 let write = write.as_ref().map(|(raw, _dis, exe)| {
                     quote! {
-                        fn #exe(&mut self, param: #mem_type) {
+                        fn #exe(
+                            &mut self,
+                            param: #param_type,
+                        ) -> Result<(), MemoryWriteError<Self::AddressType>> {
                             self.#raw(param)
                         }
                     }
                 });
                 tokens.extend(quote! {
-                    fn #execution_read(&self) -> #mem_type{
+                    fn #execution_read(
+                        &self,
+                    ) -> Result<#param_type, MemoryReadError<Self::AddressType>> {
                         self.#raw_read()
                     }
                     #write
@@ -475,12 +394,14 @@ impl ToTokens for ContextAccess {
         //display function
         let display_type = display_element.name();
         let display_body = meanings.display_function_call(
-            quote! {self.#raw_read()},
+            quote! {self.#raw_read()?},
             context.meaning(),
         );
         tokens.extend(quote! {
-            fn #display_func(&self) -> #display_type {
-                #display_body
+            fn #display_func(
+                &self,
+            ) -> Result<#display_type, MemoryReadError<Self::AddressType>> {
+                Ok(#display_body)
             }
         });
     }
@@ -491,8 +412,6 @@ pub struct SpaceTrait {
     pub space: GlobalAnonReference<sleigh_rs::Space>,
     pub addr_type: WorkType,
     pub name: Ident,
-    pub trait_read: Rc<MemoryAccessTrait>,
-    pub trait_write: Option<Rc<MemoryAccessTrait>>,
     pub varnodes: IndexMap<
         *const sleigh_rs::Varnode,
         SpaceTraitElement<sleigh_rs::Varnode>,
@@ -506,7 +425,6 @@ pub struct SpaceTrait {
 
 impl SpaceTrait {
     pub fn new<'a>(
-        bitrange_rw: &Rc<BitrangeRW>,
         big_endian: bool,
         display_element: &Rc<DisplayElement>,
         meanings: &Rc<Meanings>,
@@ -515,8 +433,6 @@ impl SpaceTrait {
         varnodes: impl Iterator<Item = &'a GlobalElement<sleigh_rs::Varnode>> + 'a,
         bitranges: impl Iterator<Item = &'a GlobalElement<sleigh_rs::Bitrange>> + 'a,
         contexts: impl Iterator<Item = &'a GlobalElement<sleigh_rs::Context>> + 'a,
-        trait_read: Rc<MemoryAccessTrait>,
-        trait_write: Option<Rc<MemoryAccessTrait>>,
     ) -> Rc<Self> {
         let varnodes = varnodes
             .map(|varnode| {
@@ -538,7 +454,6 @@ impl SpaceTrait {
                     context,
                     Rc::clone(display_element),
                     Rc::clone(meanings),
-                    Rc::clone(bitrange_rw),
                     big_endian,
                 );
                 (context.element_ptr(), functions)
@@ -554,30 +469,23 @@ impl SpaceTrait {
             varnodes,
             bitranges,
             contexts,
-            trait_read,
-            trait_write,
         })
     }
 }
 impl ToTokens for SpaceTrait {
     fn to_tokens(&self, tokens: &mut TokenStream) {
+        let space = self.space.element();
         let varnodes = self.varnodes.values();
         let bitranges = self.bitranges.values();
         let contexts = self.contexts.values();
         let name = &self.name;
         let addr_type = &self.addr_type;
-        let trait_read_name = &self.trait_read.name;
-        let trait_read_addr = &self.trait_read.address_type;
-        let trait_write = self.trait_write.as_ref().map(|write| {
-            let trait_write_name = &write.name;
-            let trait_write_addr = &write.address_type;
-            quote! {
-                + #trait_write_name<#trait_write_addr = #addr_type>
-            }
+        let trait_write = space.can_write().then(|| {
+            quote! { + MemoryWrite }
         });
         tokens.extend(quote! {
             pub trait #name:
-                #trait_read_name<#trait_read_addr = #addr_type> #trait_write
+                MemoryRead<AddressType = #addr_type> #trait_write
             {
                 #(#varnodes)*
                 #(#bitranges)*
@@ -744,7 +652,7 @@ impl SpacesTrait {
         let ptr: *const _ = context;
         let context_fun = &space_trait.type_trait.contexts.get(&ptr).unwrap();
         let read_context_fun = &context_fun.display_func;
-        quote! {#instance.#space_fun().#read_context_fun()}
+        quote! {#instance.#space_fun().#read_context_fun().unwrap()}
     }
     pub fn build_context_disassembly_read_call(
         &self,
@@ -757,7 +665,7 @@ impl SpacesTrait {
         let ptr: *const _ = context;
         let context_fun = &space_trait.type_trait.contexts.get(&ptr).unwrap();
         let read_context_fun = &context_fun.disassembly_read;
-        quote! {#instance.#space_fun().#read_context_fun()}
+        quote! {#instance.#space_fun().#read_context_fun().unwrap()}
     }
     pub fn build_context_disassembly_write_call(
         &self,
@@ -772,7 +680,7 @@ impl SpacesTrait {
         let context_fun = &space_trait.type_trait.contexts.get(&ptr).unwrap();
         let (_raw, write_context_fun, __exec) =
             &context_fun.write.as_ref().unwrap();
-        quote! {#instance.#space_fun().#write_context_fun(#value)}
+        quote! {#instance.#space_fun().#write_context_fun(#value).unwrap()}
     }
 }
 
@@ -814,8 +722,6 @@ pub struct SpaceStruct {
     pub space: GlobalAnonReference<sleigh_rs::Space>,
     pub space_trait: Rc<SpaceTrait>,
     pub chunks: Vec<MemoryChunk>,
-    pub read: Rc<MemoryAccessTrait>,
-    pub write: Option<Rc<MemoryAccessTrait>>,
 }
 
 impl SpaceStruct {
@@ -823,8 +729,6 @@ impl SpaceStruct {
         space: &GlobalElement<sleigh_rs::Space>,
         space_trait: Rc<SpaceTrait>,
         varnodes: impl Iterator<Item = ChunkBytes>,
-        read: &Rc<MemoryAccessTrait>,
-        write: &Rc<MemoryAccessTrait>,
     ) -> Rc<Self> {
         let name = format_ident!("Context{}Struct", from_sleigh(space.name()));
         let chunks = chunks_from_varnodes(varnodes);
@@ -833,36 +737,26 @@ impl SpaceStruct {
             space: space.reference(),
             space_trait,
             chunks,
-            read: Rc::clone(read),
-            write: space.can_write().then(|| Rc::clone(write)),
         })
     }
     fn gen_read_fun_impl(&self) -> TokenStream {
         let space = self.space.element();
-        let memory_read = &self.read.name;
         let struct_name = &self.name;
-        let addr_associated_type = &self.read.address_type;
-        //TODO use the native tipe for the addr intead of IntTypeU
-        let addr_type_tmp = WorkType::new_int_bits(
-            NonZeroTypeU::new(IntTypeU::BITS.into()).unwrap(),
-            false,
-        );
-        let addr_param_inner = format_ident!("addr");
         let buf_len = format_ident!("buf_len");
 
         let addr_type = WorkType::new_int_bytes(space.addr_bytes(), false);
-        let fun_ident = &self.read.function;
         let addr_param = format_ident!("addr");
         let buf_param = format_ident!("buf");
         let addr_end = format_ident!("addr_end");
         let chunks = self.chunks.iter().map(|chunk| {
-            let chunk_start = chunk.addr_start();
-            let chunk_end_excl = chunk.addr_end().checked_sub(1).unwrap();
-            let chunk_end = chunk.addr_end();
+            let chunk_start = chunk.addr_start().unsuffixed();
+            let chunk_end_excl =
+                chunk.addr_end().checked_sub(1).unwrap().unsuffixed();
+            let chunk_end = chunk.addr_end().unsuffixed();
             let chunk_name = chunk.ident();
             quote! {
                 (#chunk_start..=#chunk_end_excl, #chunk_start..=#chunk_end) => {
-                    let start = #addr_param_inner - #chunk_start;
+                    let start = #addr_param - #chunk_start;
                     let end = usize::try_from(start + #buf_len).unwrap();
                     let start = usize::try_from(start).unwrap();
                     #buf_param.copy_from_slice(&self.#chunk_name[start..end]);
@@ -870,57 +764,49 @@ impl SpaceStruct {
             }
         });
         quote! {
-            impl #memory_read for #struct_name {
-                type #addr_associated_type = #addr_type;
-                fn #fun_ident(
+            impl MemoryRead for #struct_name {
+                type AddressType = #addr_type;
+                fn read(
                     &self,
-                    #addr_param: Self::#addr_associated_type,
+                    #addr_param: Self::AddressType,
                     #buf_param: &mut [u8],
-                ) {
-                    let #addr_param_inner =
-                        <#addr_type_tmp>::try_from(#addr_param).unwrap();
+                )-> Result<(), MemoryReadError<Self::AddressType>> {
                     let #buf_len =
-                        <#addr_type_tmp>::try_from(#buf_param.len()).unwrap();
-                    let #addr_end = #addr_param_inner + #buf_len;
-                    match (#addr_param_inner, #addr_end) {
+                        <Self::AddressType>::try_from(#buf_param.len()).unwrap();
+                    let #addr_end = #addr_param + #buf_len;
+                    match (#addr_param, #addr_end) {
                         #(#chunks),*
-                        _ => panic!(
-                            "undefined mem {}:{}",
-                            #addr_param,
-                            #buf_param.len()
-                        ),
+                        (addr_start, addr_end) => {
+                            return Err(MemoryReadError::UnableToReadMemory(
+                                addr_start, addr_end,
+                            ))
+                        }
                     }
+                    Ok(())
                 }
             }
         }
     }
     fn gen_write_fun_impl(&self) -> Option<TokenStream> {
-        let write = self.write.as_ref()?;
         let space = self.space.element();
-        let fun_ident = &write.function;
-        let memory_write = &write.name;
+        if !space.can_write() {
+            return None;
+        }
         let struct_name = &self.name;
-        let addr_associated_type = &write.address_type;
-        //TODO use the native tipe for the addr intead of IntTypeU
-        let addr_type_tmp = WorkType::new_int_bits(
-            NonZeroTypeU::new(IntTypeU::BITS.into()).unwrap(),
-            false,
-        );
-        let addr_param_inner = format_ident!("addr");
         let buf_len = format_ident!("buf_len");
 
-        let addr_type = WorkType::new_int_bytes(space.addr_bytes(), false);
         let addr_param = format_ident!("addr");
         let buf_param = format_ident!("buf");
         let addr_end = format_ident!("addr_end");
         let chunks = self.chunks.iter().map(|chunk| {
-            let chunk_start = chunk.addr_start();
-            let chunk_end = chunk.addr_end();
-            let chunk_end_excl = chunk.addr_end().checked_sub(1).unwrap();
+            let chunk_start = chunk.addr_start().unsuffixed();
+            let chunk_end = chunk.addr_end().unsuffixed();
+            let chunk_end_excl =
+                chunk.addr_end().checked_sub(1).unwrap().unsuffixed();
             let chunk_name = chunk.ident();
             quote! {
                 (#chunk_start..=#chunk_end_excl, #chunk_start..=#chunk_end) => {
-                    let start = #addr_param_inner - #chunk_start;
+                    let start = #addr_param - #chunk_start;
                     let end = usize::try_from(start + #buf_len).unwrap();
                     let start = usize::try_from(start).unwrap();
                     self.#chunk_name[start..end].copy_from_slice(#buf_param);
@@ -928,26 +814,24 @@ impl SpaceStruct {
             }
         });
         Some(quote! {
-            impl #memory_write for #struct_name {
-                type #addr_associated_type = #addr_type;
-                fn #fun_ident(
+            impl MemoryWrite for #struct_name {
+                fn write(
                     &mut self,
-                    #addr_param: Self::#addr_associated_type,
+                    #addr_param: Self::AddressType,
                     #buf_param: &[u8],
-                ) {
-                    let #addr_param_inner =
-                        <#addr_type_tmp>::try_from(#addr_param).unwrap();
+                ) -> Result<(), MemoryWriteError<Self::AddressType>> {
                     let #buf_len =
-                        <#addr_type_tmp>::try_from(#buf_param.len()).unwrap();
-                    let #addr_end = #addr_param_inner + #buf_len;
-                    match (#addr_param_inner, #addr_end) {
+                        <Self::AddressType>::try_from(#buf_param.len()).unwrap();
+                    let #addr_end = #addr_param + #buf_len;
+                    match (#addr_param, #addr_end) {
                         #(#chunks),*
-                        _ => panic!(
-                            "undefined mem {}:{}",
-                            #addr_param,
-                            #buf_param.len()
-                        ),
+                        (addr_start, addr_end) => {
+                            return Err(MemoryWriteError::UnableToWriteMemory(
+                                addr_start, addr_end,
+                            ))
+                        }
                     }
+                    Ok(())
                 }
             }
         })

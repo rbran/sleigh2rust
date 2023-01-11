@@ -27,8 +27,6 @@ pub struct Disassembler {
     //all the interger -> interger/name/register translations,
     //AKA `attach values/names/variables`
     pub meanings: Rc<Meanings>,
-    //the functions that are able to convert bitranges from array into ints
-    pub bitrange_rw: Rc<BitrangeRW>,
     //all structs able to parse tokens
     pub token_parser: Rc<TokenParser>,
     //a basic trait/struct that store all the context variables from all spaces
@@ -67,8 +65,7 @@ impl Disassembler {
             &registers,
             &display,
         ));
-        let memory =
-            DisassemblerMemory::new(&bitrange_rw, &display, &meanings, &sleigh);
+        let memory = DisassemblerMemory::new(&display, &meanings, &sleigh);
         let token_parser = Rc::new(TokenParser::new(
             &sleigh,
             &display,
@@ -98,7 +95,6 @@ impl Disassembler {
             Self {
                 _me: Weak::clone(&me),
                 addr_type: format_ident!("AddrType"),
-                bitrange_rw,
                 memory,
                 global_set_trait,
                 global_set_struct,
@@ -128,7 +124,6 @@ impl<'a> ToTokens for Disassembler {
         let Self {
             registers,
             meanings,
-            bitrange_rw,
             token_parser,
             memory,
             global_set_trait,
@@ -157,8 +152,8 @@ impl<'a> ToTokens for Disassembler {
         let global_set_enum_name = global_set_trait.trait_name();
         //.map(|table| self.gen_table_and_bitches(table));
         tokens.extend(quote! {
+            use sleigh4rust::*;
             pub type #addr_type = #inst_work_type;
-            #bitrange_rw
             #global_set_trait
             #global_set_struct
             #memory

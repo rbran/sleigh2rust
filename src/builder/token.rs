@@ -12,7 +12,7 @@ use crate::builder::WorkType;
 
 use super::{
     BitrangeFromMemory, BitrangeRW, DisplayElement, Meaning,
-    MeaningExecutionType, Meanings,
+    MeaningExecutionType, Meanings, ToLiteral,
 };
 
 #[derive(Debug, Clone)]
@@ -202,7 +202,7 @@ impl TokenParser {
     ) -> (TokenStream, &TokenFieldStruct) {
         let (token_name, token_field) = self.fields.get(&assembly).unwrap();
         let call = quote! {
-            #token_parser_instance.#token_name()
+            #token_parser_instance.#token_name().unwrap()
         };
         (call, token_field)
     }
@@ -243,49 +243,48 @@ impl<'a> ToTokens for TokenParser {
         let fields = self.fields.values().map(|(name, token_field_struct)| {
             let token_field_struct_name = &token_field_struct.struct_name;
             let token_field = token_field_struct.sleigh.element();
-            let token = token_field.token();
             let sleigh_rs::RangeBits { lsb_bit, n_bits } = token_field.range();
-            let bitrange_from_varnode = BitrangeFromMemory::new(
-                token.endian().is_big(),
-                Rc::clone(&self.bitrange_rw),
-                0,
-                token.len_bytes,
-                *lsb_bit,
-                *n_bits,
-                token_field.meaning().is_signed(),
+            let signed = token_field.meaning().is_signed();
+            let work_type = WorkType::new_int_bits(
+                NonZeroTypeU::new(n_bits.get() + lsb_bit).unwrap(),
+                signed,
             );
-            //how to read this from the token
-            fn read(
-                work_value: &Ident,
-                read_bytes: NonZeroTypeU,
-                token_start: IntTypeU,
-                work_start: IntTypeU,
-            ) -> TokenStream {
-                let work_end = work_start + read_bytes.get();
-                let token_end = token_start + read_bytes.get();
-                quote! {
-                    let work_start = #work_start as usize;
-                    let work_end = #work_end as usize;
-                    let token_start = #token_start as usize;
-                    let token_end = #token_end as usize;
-                    #work_value[work_start..work_end]
-                        .copy_from_slice(&self.0[token_start..token_end]);
-                }
-            }
-            //generate the instructions that read this bitrange
-            let read_bitrange = bitrange_from_varnode.read_value(read);
+            let read_function = work_type.sleigh4rust_read_memory();
+            let big_endian = token_field.token().endian().is_big();
+            let param_type = WorkType::new_int_bits(*n_bits, signed);
+            let start_bit = lsb_bit.unsuffixed();
+            let len_bits = n_bits.get().unsuffixed();
             quote! {
-                fn #name(&self) -> #token_field_struct_name {
-                    let inner_value = {
-                        #read_bitrange
-                    };
-                    #token_field_struct_name(inner_value)
+                fn #name(
+                    &self,
+                ) -> Result<#token_field_struct_name, MemoryReadError<usize>> {
+                    let inner_value = self.#read_function::<#big_endian>(
+                        0,
+                        LEN,
+                        #start_bit,
+                        #len_bits,
+                    )?;
+                    Ok(#token_field_struct_name(
+                        #param_type::try_from(inner_value).unwrap()
+                    ))
                 }
             }
         });
         tokens.extend(quote! {
             #(#fields_structs)*
             struct #name<const LEN: usize>([u8; LEN]);
+            impl<const LEN: usize> MemoryRead for TokenParser<LEN>{
+                type AddressType = usize;
+                fn read(
+                    &self,
+                    addr: Self::AddressType,
+                    buf: &mut [u8],
+                ) -> Result<(), MemoryReadError<Self::AddressType>> {
+                    let end = addr + buf.len();
+                    buf.copy_from_slice(&self.0[addr..end]);
+                    Ok(())
+                }
+            }
             impl<const LEN: usize> #name<LEN> {
                 fn #creator(data: &[u8]) -> Option<Self> {
                     let token_slice: &[u8] = data.get(..LEN)?;

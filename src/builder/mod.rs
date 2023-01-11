@@ -31,6 +31,36 @@ use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use sleigh_rs::{IntTypeU, NonZeroTypeU};
 
+trait ToLiteral {
+    fn suffixed(&self) -> Literal;
+    fn unsuffixed(&self) -> Literal;
+}
+
+macro_rules! impl_to_literal {
+    ($type:ty, $suffixed:ident, $unsuffixed:ident) => {
+        impl ToLiteral for $type {
+            fn suffixed(&self) -> Literal {
+                Literal::$suffixed(*self)
+            }
+            fn unsuffixed(&self) -> Literal {
+                Literal::$unsuffixed(*self)
+            }
+        }
+    };
+}
+impl_to_literal!(u8, u8_suffixed, u8_unsuffixed);
+impl_to_literal!(u16, u16_suffixed, u16_unsuffixed);
+impl_to_literal!(u32, u32_suffixed, u32_unsuffixed);
+impl_to_literal!(u64, u64_suffixed, u64_unsuffixed);
+impl_to_literal!(u128, u128_suffixed, u128_unsuffixed);
+impl_to_literal!(usize, usize_suffixed, usize_unsuffixed);
+impl_to_literal!(i8, i8_suffixed, i8_unsuffixed);
+impl_to_literal!(i16, i16_suffixed, i16_unsuffixed);
+impl_to_literal!(i32, i32_suffixed, i32_unsuffixed);
+impl_to_literal!(i64, i64_suffixed, i64_unsuffixed);
+impl_to_literal!(i128, i128_suffixed, i128_unsuffixed);
+impl_to_literal!(isize, isize_suffixed, isize_unsuffixed);
+
 //TODO remove the signed/unsigned
 #[derive(Clone, Copy, Debug)]
 pub enum WorkType {
@@ -166,6 +196,40 @@ impl WorkType {
             WorkType::Array(_) => todo!(),
         }
     }
+    fn sleigh4rust_read_memory(&self) -> TokenStream {
+        match self {
+            WorkType::U8 => quote! {read_u8},
+            WorkType::U16 => quote! {read_u16},
+            WorkType::U32 => quote! {read_u32},
+            WorkType::U64 => quote! {read_u64},
+            WorkType::U128 => quote! {read_u128},
+            WorkType::U256 => quote! {read_u256},
+            WorkType::I8 => quote! {read_i8},
+            WorkType::I16 => quote! {read_i16},
+            WorkType::I32 => quote! {read_i32},
+            WorkType::I64 => quote! {read_i64},
+            WorkType::I128 => quote! {read_i128},
+            WorkType::I256 => quote! {read_i256},
+            WorkType::Array(_) => todo!(),
+        }
+    }
+    fn sleigh4rust_write_memory(&self) -> TokenStream {
+        match self {
+            WorkType::U8 => quote! {write_u8},
+            WorkType::U16 => quote! {write_u16},
+            WorkType::U32 => quote! {write_u32},
+            WorkType::U64 => quote! {write_u64},
+            WorkType::U128 => quote! {write_u128},
+            WorkType::U256 => quote! {write_u256},
+            WorkType::I8 => quote! {write_i8},
+            WorkType::I16 => quote! {write_i16},
+            WorkType::I32 => quote! {write_i32},
+            WorkType::I64 => quote! {write_i64},
+            WorkType::I128 => quote! {write_i128},
+            WorkType::I256 => quote! {write_i256},
+            WorkType::Array(_) => todo!(),
+        }
+    }
 }
 impl ToTokens for WorkType {
     fn to_tokens(&self, tokens: &mut TokenStream) {
@@ -277,7 +341,7 @@ impl BitrangeFromMemory {
                 #bit_start as usize,
                 #bit_len as usize,
             );
-            #return_type::try_from(value).unwrap()
+            Ok(#return_type::try_from(value).unwrap())
         }
     }
 }

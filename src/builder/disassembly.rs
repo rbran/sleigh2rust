@@ -104,7 +104,10 @@ pub trait DisassemblyGenerator<'a> {
             Local(variable) => self.set_variable(variable, value),
         }
     }
-    fn disassembly(&self, assertations: &mut dyn Iterator<Item=&'a Assertation>) -> TokenStream {
+    fn disassembly(
+        &self,
+        assertations: &mut dyn Iterator<Item = &'a Assertation>,
+    ) -> TokenStream {
         assertations
             .map(|ass| {
                 use sleigh_rs::semantic::disassembly::Assertation::*;

@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use sleigh_rs::semantic::disassembly::{GlobalSet, Variable, Assertation};
+use sleigh_rs::semantic::disassembly::{Assertation, GlobalSet, Variable};
 use sleigh_rs::semantic::{
     GlobalAnonReference, GlobalElement, GlobalReference,
 };
@@ -112,7 +112,9 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
     fn global_set(&self, global_set: &'b GlobalSet) -> TokenStream {
         let sleigh_context = global_set.context().element();
         let disassembler = self.constructor.disassembler.upgrade().unwrap();
-        let context = disassembler.global_set_trait.context(sleigh_context.element());
+        let context = disassembler
+            .global_set_trait
+            .context(sleigh_context.element());
         let addr_type = &disassembler.inst_work_type;
         use sleigh_rs::semantic::disassembly::AddrScope::*;
         let address = match &global_set.address {
@@ -188,7 +190,8 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
         match vars.entry(ptr) {
             Occupied(_) => unreachable!("Variable duplicated"),
             Vacant(entry) => {
-                let var_name = format_ident!("calc_{}", from_sleigh(var.name()));
+                let var_name =
+                    format_ident!("calc_{}", from_sleigh(var.name()));
                 let entry =
                     entry.insert(ParsedField::new(var_name, Rc::clone(var)));
                 let name = &entry.name;
@@ -264,7 +267,7 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyPattern<'a> {
     //TODO identify disassembly that can't be executed separated between pre/pos
     fn disassembly(
         &self,
-        assertations: &mut dyn Iterator<Item=&Assertation>
+        assertations: &mut dyn Iterator<Item = &Assertation>,
     ) -> TokenStream {
         let mut tokens = TokenStream::new();
         for ass in assertations {
@@ -334,7 +337,8 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyPattern<'a> {
         match self.vars.entry(ptr) {
             Occupied(_) => unreachable!("Variable duplicated"),
             Vacant(entry) => {
-                let var_name = format_ident!("calc_{}", from_sleigh(var.name()));
+                let var_name =
+                    format_ident!("calc_{}", from_sleigh(var.name()));
                 let entry =
                     entry.insert(ParsedField::new(var_name, Rc::clone(var)));
                 let name = &entry.name;

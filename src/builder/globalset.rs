@@ -92,7 +92,7 @@ impl ToTokens for GlobalSetStruct {
                     };
                     self.0.entry(inst_start).or_insert_with(|| {
                         let mut context = C::default();
-                        context.#context_space_fun().#write_context_fun(value);
+                        context.#context_space_fun().#write_context_fun(value).unwrap();
                         context
                     });
                 }
