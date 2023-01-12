@@ -499,21 +499,19 @@ impl ToTokens for SpaceTraitElement<sleigh_rs::Varnode> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let read_name = &self.function_read;
         let varnode = self.element.element();
-        let value_bytes = varnode.len_bytes().get();
-        let value_addr = varnode.offset();
-        let addr_type =
-            WorkType::new_int_bytes(varnode.space().addr_bytes(), false);
+        let value_bytes = varnode.len_bytes().get().unsuffixed();
+        let value_addr = varnode.offset().unsuffixed();
         let write_function = self.function_write.as_ref().map(|write_func| {
             quote! {
-                fn #write_func(&mut self, value: [u8; #value_bytes as usize]) {
-                    self.write(#value_addr as #addr_type, &value)
+                fn #write_func(&mut self, value: [u8; #value_bytes]) {
+                    self.write(#value_addr, &value)
                 }
             }
         });
         tokens.extend(quote! {
-            fn #read_name(&self) -> [u8; #value_bytes as usize] {
-                let mut data = [0u8; #value_bytes as usize];
-                self.read(#value_addr as #addr_type, &mut data);
+            fn #read_name(&self) -> [u8; #value_bytes] {
+                let mut data = [0u8; #value_bytes];
+                self.read(#value_addr, &mut data);
                 data
             }
             #write_function
@@ -560,40 +558,40 @@ fn read_write_bitrange(
         WorkType::new_int_bytes(varnode.space().addr_bytes(), false);
     let addr = varnode_addr + varnode_byte_start;
     let mem_bytes = (bit_len + 7) / 8;
-    let output_bytes = (bit_len + 7) / 8;
+    let output_bytes = ((bit_len + 7) / 8).unsuffixed();
 
     let work_type =
         WorkType::new_int_bytes(mem_bytes.try_into().unwrap(), false);
-    let work_bytes = work_type.len_bytes().get();
+    let work_bytes = work_type.len_bytes().get().unsuffixed();
 
     let write_function = write_name.map(|write_func| {
         quote! {
-            fn #write_func(&mut self, param: [u8; #output_bytes as usize]) {
-                let mut mem = [0u8; #work_bytes as usize];
+            fn #write_func(&mut self, param: [u8; #output_bytes]) {
+                let mut mem = [0u8; #work_bytes];
                 self.read(#addr as #addr_type, &mut mem[..#mem_bytes as usize]);
                 let mut mem = <#work_type>::from_be_bytes(mem);
                 mem &= !((#bit_mask as #work_type) << #bit_start);
 
-                let mut param_tmp = [0u8; #work_bytes as usize];
-                param_tmp[..#output_bytes as usize].copy_from_slice(&param);
+                let mut param_tmp = [0u8; #work_bytes];
+                param_tmp[..#output_bytes].copy_from_slice(&param);
                 let mut param = <#work_type>::from_be_bytes(param_tmp);
                 param &= #bit_mask as #work_type;
                 param <<= #bit_start;
 
                 let output = (mem | param).to_be_bytes();
-                self.write(#addr as #addr_type, &output[..#output_bytes as usize]);
+                self.write(#addr as #addr_type, &output[..#output_bytes]);
             }
         }
     });
     quote! {
-        fn #read_name(&self) -> [u8; #output_bytes as usize] {
-            let mut mem = [0u8; #work_bytes as usize];
+        fn #read_name(&self) -> [u8; #output_bytes] {
+            let mut mem = [0u8; #work_bytes];
             self.read(#addr as #addr_type, &mut mem[..#mem_bytes as usize]);
             let mut work = <#work_type>::from_be_bytes(mem);
             work >>= #bit_start;
             work &= #bit_mask as #work_type;
             let work = work.to_be_bytes();
-            <[u8; #output_bytes as usize]>::try_from(
+            <[u8; #output_bytes]>::try_from(
                 &work[..#mem_bytes as usize]
             ).unwrap()
         }
@@ -964,9 +962,9 @@ impl MemoryChunk {
     }
     pub fn struct_chunk(&self) -> TokenStream {
         let ident = self.ident();
-        let len = self.bytes_len().get();
+        let len = self.bytes_len().get().unsuffixed();
         //TODO don't make it public, make a default or creator function
-        quote! { pub #ident: [u8; #len as usize] }
+        quote! { pub #ident: [u8; #len] }
     }
 }
 

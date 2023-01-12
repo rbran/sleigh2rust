@@ -9,7 +9,7 @@ use quote::{format_ident, quote, ToTokens};
 
 use super::GlobalSetStruct;
 use super::{
-    BitrangeRW, DisassemblerMemory, DisplayElement, GlobalSetTrait, Meanings,
+    DisassemblerMemory, DisplayElement, GlobalSetTrait, Meanings,
     RegistersEnum, TokenParser, WorkType,
 };
 
@@ -45,8 +45,6 @@ pub struct Disassembler {
 }
 impl Disassembler {
     pub fn new(sleigh: Rc<sleigh_rs::Sleigh>) -> Rc<Self> {
-        let bitrange_rw = Rc::new(BitrangeRW::new());
-
         let registers = Rc::new(RegistersEnum::from_all(
             format_ident!("Register"),
             &sleigh,
@@ -66,12 +64,8 @@ impl Disassembler {
             &display,
         ));
         let memory = DisassemblerMemory::new(&display, &meanings, &sleigh);
-        let token_parser = Rc::new(TokenParser::new(
-            &sleigh,
-            &display,
-            &meanings,
-            &bitrange_rw,
-        ));
+        let token_parser =
+            Rc::new(TokenParser::new(&sleigh, &display, &meanings));
         let inst_work_type =
             WorkType::new_int_bytes(sleigh.addr_len_bytes(), false);
         let global_set_trait = Rc::new(GlobalSetTrait::new(&sleigh));

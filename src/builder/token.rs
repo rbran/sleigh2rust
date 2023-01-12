@@ -5,14 +5,13 @@ use proc_macro2::{Ident, TokenStream};
 use quote::ToTokens;
 use quote::{format_ident, quote};
 use sleigh_rs::semantic::{GlobalAnonReference, GlobalElement};
-use sleigh_rs::{IntTypeU, NonZeroTypeU};
+use sleigh_rs::NonZeroTypeU;
 
 use crate::builder::formater::*;
 use crate::builder::WorkType;
 
 use super::{
-    BitrangeFromMemory, BitrangeRW, DisplayElement, Meaning,
-    MeaningExecutionType, Meanings, ToLiteral,
+    DisplayElement, Meaning, MeaningExecutionType, Meanings, ToLiteral,
 };
 
 #[derive(Debug, Clone)]
@@ -136,7 +135,6 @@ pub struct TokenParser {
     pub name: Ident,
     //new function
     new_func: Ident,
-    bitrange_rw: Rc<BitrangeRW>,
     ////len in bytes
     //pub token_bytes: NonZeroTypeU,
     //token_field that this parser can produce
@@ -148,7 +146,6 @@ impl TokenParser {
         sleigh: &sleigh_rs::Sleigh,
         display: &Rc<DisplayElement>,
         meanings: &Rc<Meanings>,
-        bitrange_rw: &Rc<BitrangeRW>,
     ) -> Self {
         //list of fields that this token is able to produce
         let fields = sleigh
@@ -167,7 +164,6 @@ impl TokenParser {
             .collect();
         Self {
             name: format_ident!("TokenParser"),
-            bitrange_rw: Rc::clone(bitrange_rw),
             fields,
             new_func: format_ident!("new"),
         }
@@ -202,7 +198,7 @@ impl TokenParser {
     ) -> (TokenStream, &TokenFieldStruct) {
         let (token_name, token_field) = self.fields.get(&assembly).unwrap();
         let call = quote! {
-            #token_parser_instance.#token_name().unwrap()
+            #token_parser_instance.#token_name()
         };
         (call, token_field)
     }
@@ -257,16 +253,16 @@ impl<'a> ToTokens for TokenParser {
             quote! {
                 fn #name(
                     &self,
-                ) -> Result<#token_field_struct_name, MemoryReadError<usize>> {
+                ) -> #token_field_struct_name {
                     let inner_value = self.#read_function::<#big_endian>(
                         0,
                         LEN,
                         #start_bit,
                         #len_bits,
-                    )?;
-                    Ok(#token_field_struct_name(
+                    ).unwrap();
+                    #token_field_struct_name(
                         #param_type::try_from(inner_value).unwrap()
-                    ))
+                    )
                 }
             }
         });
@@ -281,8 +277,10 @@ impl<'a> ToTokens for TokenParser {
                     buf: &mut [u8],
                 ) -> Result<(), MemoryReadError<Self::AddressType>> {
                     let end = addr + buf.len();
-                    buf.copy_from_slice(&self.0[addr..end]);
-                    Ok(())
+                    self.0
+                        .get(addr..end)
+                        .map(|src| buf.copy_from_slice(src))
+                        .ok_or(MemoryReadError::UnableToReadMemory(addr, end))
                 }
             }
             impl<const LEN: usize> #name<LEN> {
