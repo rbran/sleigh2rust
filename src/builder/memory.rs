@@ -11,10 +11,13 @@ use crate::builder::formater::*;
 
 use super::{DisplayElement, Meanings, ToLiteral, WorkType};
 
+mod debug_context;
+
 #[derive(Debug, Clone)]
 pub struct DisassemblerMemory {
     pub space_traits: IndexMap<*const sleigh_rs::Space, Rc<SpaceTrait>>,
-    pub space_structs: IndexMap<*const sleigh_rs::Space, Rc<SpaceStruct>>,
+    pub space_structs:
+        IndexMap<*const sleigh_rs::Space, Rc<debug_context::SpaceStructDebug>>,
     pub spaces_trait: Rc<SpacesTrait>,
     pub spaces_struct: Rc<SpacesStruct>,
 }
@@ -65,30 +68,30 @@ impl DisassemblerMemory {
             space_traits.values(),
         );
 
-        let space_structs: IndexMap<*const sleigh_rs::Space, Rc<SpaceStruct>> =
-            spaces
-                .iter()
-                .map(|space| {
-                    let ptr = space.element_ptr();
-                    let space_struct = SpaceStruct::new(
-                        space,
-                        Rc::clone(
-                            space_traits.get(&space.element_ptr()).unwrap(),
-                        ),
-                        sleigh
-                            .contexts()
-                            .filter(|context| {
-                                context.varnode().space().element_ptr()
-                                    == space.element_ptr()
-                            })
-                            .map(|context| ChunkBytes {
-                                offset: context.varnode().offset,
-                                len: context.varnode().len_bytes,
-                            }),
-                    );
-                    (ptr, space_struct)
-                })
-                .collect();
+        let space_structs: IndexMap<
+            *const sleigh_rs::Space,
+            Rc<debug_context::SpaceStructDebug>,
+        > = spaces
+            .iter()
+            .map(|space| {
+                let ptr = space.element_ptr();
+                let space_struct = debug_context::SpaceStructDebug::new(
+                    space,
+                    Rc::clone(space_traits.get(&space.element_ptr()).unwrap()),
+                    sleigh
+                        .contexts()
+                        .filter(|context| {
+                            context.varnode().space().element_ptr()
+                                == space.element_ptr()
+                        })
+                        .map(|context| ChunkBytes {
+                            offset: context.varnode().offset,
+                            len: context.varnode().len_bytes,
+                        }),
+                );
+                (ptr, space_struct)
+            })
+            .collect();
 
         let spaces_struct =
             SpacesStruct::new(Rc::clone(&spaces_trait), space_structs.values());
@@ -205,20 +208,27 @@ impl ToTokens for ContextAccess {
         let varnode = context.varnode();
         let range = context.range();
         let bit_len = range.n_bits;
-        let start_bit = range.lsb_bit.unsuffixed();
-        let len_bits = range.n_bits.get().unsuffixed();
+        let lsb_bit = range.lsb_bit;
+        let n_bits = range.n_bits.get();
         let signed = context.meaning().is_signed();
-
-        let varnode_addr = varnode.offset().unsuffixed();
-        let varnode_len = context.varnode().len_bytes().get().unsuffixed();
 
         let disassembly_type = WorkType::int_type(true);
 
-        let work_type = WorkType::new_int_bits(
-            NonZeroTypeU::new(range.n_bits.get() + range.lsb_bit).unwrap(),
-            signed,
+        let (data_addr, data_lsb) = sleigh4rust::bytes_from_varnode(
+            *big_endian,
+            varnode.offset(),
+            varnode.len_bytes().get(),
+            lsb_bit,
+            n_bits,
         );
         let param_type = WorkType::new_int_bits(bit_len, signed);
+        let work_type = WorkType::new_int_bits(
+            NonZeroTypeU::new(data_lsb + n_bits).unwrap(),
+            signed,
+        );
+        let data_addr = data_addr.unsuffixed();
+        let data_lsb = data_lsb.unsuffixed();
+        let n_bits = n_bits.unsuffixed();
         let write_functions = write.as_ref().map(|(raw, _dis, _exe)| {
             let write_work_type = work_type.sleigh4rust_write_memory();
             quote! {
@@ -228,10 +238,9 @@ impl ToTokens for ContextAccess {
                 )-> Result<(), MemoryWriteError<Self::AddressType>> {
                     self.#write_work_type::<#big_endian>(
                         #work_type::from(param),
-                        #varnode_addr,
-                        #varnode_len,
-                        #start_bit,
-                        #len_bits,
+                        #data_addr,
+                        #data_lsb,
+                        #n_bits,
                     )
                 }
             }
@@ -242,10 +251,9 @@ impl ToTokens for ContextAccess {
                 &self,
             ) -> Result<#param_type, MemoryReadError<Self::AddressType>> {
                 let work_value = self.#read_work_type::<#big_endian>(
-                    #varnode_addr,
-                    #varnode_len,
-                    #start_bit,
-                    #len_bits,
+                    #data_addr,
+                    #data_lsb,
+                    #n_bits,
                 )?;
                 Ok(#param_type::try_from(work_value).unwrap())
             }
@@ -284,7 +292,8 @@ impl ToTokens for ContextAccess {
                             &mut self,
                             param: #disassembly_type,
                         ) -> Result<(), MemoryWriteError<Self::AddressType>> {
-                            self.#raw(#param_type::try_from(param).unwrap())
+                            //TODO ` as ` will not work with ethnum
+                            self.#raw(param as #param_type)
                         }
                     }
                 });
@@ -859,14 +868,17 @@ pub struct SpacesStruct {
     //name of the global memory struct
     pub name: Ident,
     //spaces that this struct can read/write
-    pub spaces: IndexMap<*const sleigh_rs::Space, (Ident, Rc<SpaceStruct>)>,
+    pub spaces: IndexMap<
+        *const sleigh_rs::Space,
+        (Ident, Rc<debug_context::SpaceStructDebug>),
+    >,
     pub spaces_trait: Rc<SpacesTrait>,
 }
 
 impl SpacesStruct {
     pub fn new<'a>(
         spaces_trait: Rc<SpacesTrait>,
-        spaces: impl Iterator<Item = &'a Rc<SpaceStruct>>,
+        spaces: impl Iterator<Item = &'a Rc<debug_context::SpaceStructDebug>>,
     ) -> Rc<Self> {
         let name = format_ident!("SpacesStruct");
         //iterator for all varnodes to this space
@@ -965,6 +977,24 @@ impl MemoryChunk {
         let len = self.bytes_len().get().unsuffixed();
         //TODO don't make it public, make a default or creator function
         quote! { pub #ident: [u8; #len] }
+    }
+    pub fn struct_chunk_debug(&self) -> TokenStream {
+        let ident = self.ident();
+        let len = (self.bytes_len().get() * 8).unsuffixed();
+        //TODO don't make it public, make a default or creator function
+        quote! { pub #ident: [Option<bool>; #len] }
+    }
+    pub fn struct_chunk_default(&self) -> TokenStream {
+        let ident = self.ident();
+        let len = self.bytes_len().get().unsuffixed();
+        //TODO don't make it public, make a default or creator function
+        quote! { #ident: [0u8; #len] }
+    }
+    pub fn struct_chunk_debug_default(&self) -> TokenStream {
+        let ident = self.ident();
+        let len = (self.bytes_len().get() * 8).unsuffixed();
+        //TODO don't make it public, make a default or creator function
+        quote! { #ident: [None; #len] }
     }
 }
 

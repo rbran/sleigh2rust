@@ -241,23 +241,30 @@ impl<'a> ToTokens for TokenParser {
             let token_field = token_field_struct.sleigh.element();
             let sleigh_rs::RangeBits { lsb_bit, n_bits } = token_field.range();
             let signed = token_field.meaning().is_signed();
+            let big_endian = token_field.token().endian().is_big();
+            let param_type = WorkType::new_int_bits(*n_bits, signed);
+            let len_bits = n_bits.get().unsuffixed();
+            let (data_addr, data_lsb) = sleigh4rust::bytes_from_varnode(
+                big_endian,
+                0,
+                token_field.token().len_bytes.get(),
+                *lsb_bit,
+                n_bits.get(),
+            );
             let work_type = WorkType::new_int_bits(
-                NonZeroTypeU::new(n_bits.get() + lsb_bit).unwrap(),
+                NonZeroTypeU::new(data_lsb + n_bits.get()).unwrap(),
                 signed,
             );
             let read_function = work_type.sleigh4rust_read_memory();
-            let big_endian = token_field.token().endian().is_big();
-            let param_type = WorkType::new_int_bits(*n_bits, signed);
-            let start_bit = lsb_bit.unsuffixed();
-            let len_bits = n_bits.get().unsuffixed();
+            let data_addr = data_addr.unsuffixed();
+            let data_lsb = data_lsb.unsuffixed();
             quote! {
                 fn #name(
                     &self,
                 ) -> #token_field_struct_name {
                     let inner_value = self.#read_function::<#big_endian>(
-                        0,
-                        LEN,
-                        #start_bit,
+                        #data_addr,
+                        #data_lsb,
                         #len_bits,
                     ).unwrap();
                     #token_field_struct_name(
