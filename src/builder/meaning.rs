@@ -3,10 +3,10 @@ use std::rc::Rc;
 
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use sleigh_rs::semantic::{GlobalReference, PrintBase, PrintFmt};
-use sleigh_rs::{IntTypeS, NonZeroTypeU};
+use sleigh_rs::{GlobalReference, PrintBase, PrintFmt};
+use sleigh_rs::{NonZeroTypeU, Number, NumberSuperSigned};
 
-use super::{DisplayElement, RegistersEnum, WorkType};
+use super::{DisplayElement, RegistersEnum, WorkType, DISPLAY_WORK_TYPE};
 
 type VarMeaningSleigh = [(usize, GlobalReference<sleigh_rs::Varnode>)];
 #[derive(Debug, Clone)]
@@ -144,7 +144,7 @@ impl ToTokens for NameMeaning {
         });
     }
 }
-type ValueMeaningSleigh = [(usize, IntTypeS)];
+type ValueMeaningSleigh = [(usize, Number)];
 #[derive(Debug, Clone)]
 pub struct ValueMeaning {
     sleigh: Rc<ValueMeaningSleigh>,
@@ -170,15 +170,18 @@ impl ValueMeaning {
         let (min, max) = sleigh.iter().map(|(_i, value)| *value).fold(
             (0, 0),
             |(min, max), value| {
-                let min = min.min(value);
-                let max = max.max(value);
+                let min = min.min(value.signed_super());
+                let max = max.max(value.signed_super());
                 (min, max)
             },
         );
-        let signed = min < 0;
         //TODO this is not TOTALLY true, but good enough for now
-        let value_bits =
-            (IntTypeS::BITS - min.abs().max(max).leading_zeros()) + 1;
+        let mut value_bits =
+            NumberSuperSigned::BITS - min.abs().max(max.abs()).leading_zeros();
+        let signed = min.is_negative();
+        if min.is_negative() {
+            value_bits += 1;
+        }
         let value_type = WorkType::new_int_bits(
             NonZeroTypeU::new(value_bits.into()).unwrap(),
             signed,
@@ -205,11 +208,10 @@ impl ToTokens for ValueMeaning {
         let ele_value = self
             .sleigh
             .iter()
-            .map(|(_i, v)| Literal::i128_unsuffixed((*v).into()));
+            .map(|(_i, v)| Literal::i128_unsuffixed(v.signed_super()));
         let display_func = &self.display_func;
         let value_func = &self.value_func;
         let value_type = &self.value_type;
-        let display_value_type = DisplayElement::var_number_type();
         let variant = self.display.var_number();
         let index_type = &self.index_type;
         tokens.extend(quote! {
@@ -219,7 +221,7 @@ impl ToTokens for ValueMeaning {
                 <#param_type as TryFrom<T>>::Error: core::fmt::Debug,
             {
                 let value = #value_func(num);
-                let value = #display_value_type::try_from(value).unwrap();
+                let value = #DISPLAY_WORK_TYPE::try_from(value).unwrap();
                 #display_element::#variant(hex, value)
             }
             fn #value_func<T>(num: T) -> #value_type
@@ -407,16 +409,15 @@ impl ToTokens for Meanings {
         let literal_func = &self.literal_display;
         let display_type = self.display.name();
         let number_type = self.display.var_number();
-        let param_type = WorkType::int_type(true);
         tokens.extend(quote! {
             fn #literal_func<T>(hex: bool, num: T) -> #display_type
             where
-                #param_type: TryFrom<T>,
-                <#param_type as TryFrom<T>>::Error: core::fmt::Debug,
+                #DISPLAY_WORK_TYPE: TryFrom<T>,
+                <#DISPLAY_WORK_TYPE as TryFrom<T>>::Error: core::fmt::Debug,
             {
                 #display_type::#number_type(
                     hex,
-                    #param_type::try_from(num).unwrap(),
+                    #DISPLAY_WORK_TYPE::try_from(num).unwrap(),
                 )
             }
             #(#variables)*

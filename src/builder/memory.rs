@@ -4,12 +4,14 @@ use std::rc::Rc;
 
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use sleigh_rs::semantic::{GlobalAnonReference, GlobalElement};
+use sleigh_rs::{GlobalAnonReference, GlobalElement};
 use sleigh_rs::{IntTypeU, NonZeroTypeU};
 
 use crate::builder::formater::*;
 
-use super::{DisplayElement, Meanings, ToLiteral, WorkType};
+use super::{
+    DisplayElement, Meanings, ToLiteral, WorkType, DISASSEMBLY_WORK_TYPE,
+};
 
 mod debug_context;
 
@@ -212,8 +214,6 @@ impl ToTokens for ContextAccess {
         let n_bits = range.n_bits.get();
         let signed = context.meaning().is_signed();
 
-        let disassembly_type = WorkType::int_type(true);
-
         let (data_addr, data_lsb) = sleigh4rust::bytes_from_varnode(
             *big_endian,
             varnode.offset(),
@@ -270,7 +270,7 @@ impl ToTokens for ContextAccess {
                     quote! {
                         fn #dis(
                             &mut self,
-                            _param: #disassembly_type,
+                            _param: #DISASSEMBLY_WORK_TYPE,
                         ) -> Result<(), MemoryWriteError<Self::AddressType>> {
                             todo!()
                         }
@@ -279,7 +279,7 @@ impl ToTokens for ContextAccess {
                 tokens.extend(quote! {
                     fn #disassembly_read(
                         &self,
-                    ) -> Result<#disassembly_type, MemoryReadError<Self::AddressType>> {
+                    ) -> Result<#DISASSEMBLY_WORK_TYPE, MemoryReadError<Self::AddressType>> {
                         todo!()
                     }
                     #write
@@ -290,7 +290,7 @@ impl ToTokens for ContextAccess {
                     quote! {
                         fn #dis(
                             &mut self,
-                            param: #disassembly_type,
+                            param: #DISASSEMBLY_WORK_TYPE,
                         ) -> Result<(), MemoryWriteError<Self::AddressType>> {
                             //TODO ` as ` will not work with ethnum
                             self.#raw(param as #param_type)
@@ -300,9 +300,9 @@ impl ToTokens for ContextAccess {
                 tokens.extend(quote! {
                     fn #disassembly_read(
                         &self,
-                    ) -> Result<#disassembly_type, MemoryReadError<Self::AddressType>> {
+                    ) -> Result<#DISASSEMBLY_WORK_TYPE, MemoryReadError<Self::AddressType>> {
                         let raw_value = self.#raw_read()?;
-                        Ok(#disassembly_type::try_from(raw_value).unwrap())
+                        Ok(#DISASSEMBLY_WORK_TYPE::try_from(raw_value).unwrap())
                     }
                     #write
                 });

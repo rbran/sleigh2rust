@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 
-use sleigh_rs::semantic::GlobalElement;
+use sleigh_rs::GlobalElement;
 use sleigh_rs::Varnode;
 
 use super::formater::*;
@@ -48,7 +48,7 @@ impl RegistersEnum {
         for table in sleigh.tables() {
             for constructor in table.constructors.iter() {
                 for element in constructor.display.elements().iter() {
-                    use sleigh_rs::semantic::display::DisplayScope::*;
+                    use sleigh_rs::display::DisplayScope::*;
                     match element {
                         Varnode(var) => add_reg(var.element()),
                         Context(context) => {
@@ -58,7 +58,7 @@ impl RegistersEnum {
                             add_attach(token_field.element().meaning())
                         }
                         InstStart(_) | InstNext(_) | Disassembly(_)
-                        | Table(_) | Literal(_) => (),
+                        | Table(_) | Literal(_) | Space => (),
                     }
                 }
             }

@@ -4,14 +4,15 @@ use std::rc::Rc;
 use proc_macro2::{Ident, TokenStream};
 use quote::ToTokens;
 use quote::{format_ident, quote};
-use sleigh_rs::semantic::{GlobalAnonReference, GlobalElement};
 use sleigh_rs::NonZeroTypeU;
+use sleigh_rs::{GlobalAnonReference, GlobalElement};
 
 use crate::builder::formater::*;
 use crate::builder::WorkType;
 
 use super::{
     DisplayElement, Meaning, MeaningExecutionType, Meanings, ToLiteral,
+    DISASSEMBLY_WORK_TYPE,
 };
 
 #[derive(Debug, Clone)]
@@ -69,7 +70,6 @@ impl ToTokens for TokenFieldStruct {
             meanings,
             sleigh,
         } = self;
-        let disassembly_type = WorkType::int_type(true);
         let display_type = display.name();
         let sleigh_token_field = sleigh.element();
         let sleigh_meaning = sleigh_token_field.meaning();
@@ -92,12 +92,12 @@ impl ToTokens for TokenFieldStruct {
         let disassembly_body = match &meaning {
             Meaning::Variables(_) | Meaning::Literal(_) | Meaning::Names(_) => {
                 quote! {
-                    #disassembly_type::try_from(self.0).unwrap()
+                    #DISASSEMBLY_WORK_TYPE::try_from(self.0).unwrap()
                 }
             }
             Meaning::Values(_, _) => {
                 quote! {
-                    #disassembly_type::try_from(self.#execution_fun()).unwrap()
+                    #DISASSEMBLY_WORK_TYPE::try_from(self.#execution_fun()).unwrap()
                 }
             }
         };
@@ -110,7 +110,7 @@ impl ToTokens for TokenFieldStruct {
                 fn #execution_fun(&self) -> #execution_type {
                     #execution_body
                 }
-                fn #disassembly_fun(&self) -> #disassembly_type {
+                fn #disassembly_fun(&self) -> #DISASSEMBLY_WORK_TYPE {
                     #disassembly_body
                 }
                 fn #display_fun(&self) -> #display_type {

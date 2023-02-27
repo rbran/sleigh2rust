@@ -4,16 +4,15 @@ use std::rc::Rc;
 
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use sleigh_rs::semantic::disassembly::{Assertation, GlobalSet, Variable};
-use sleigh_rs::semantic::{
-    GlobalAnonReference, GlobalElement, GlobalReference,
-};
+use sleigh_rs::disassembly::{Assertation, GlobalSet, Variable};
+use sleigh_rs::{GlobalAnonReference, GlobalElement, GlobalReference};
 
 use crate::builder::formater::from_sleigh;
-use crate::builder::{Disassembler, DisassemblyGenerator, WorkType};
+use crate::builder::{Disassembler, DisassemblyGenerator, ToLiteral, WorkType};
 
 use super::{ConstructorStruct, ParsedField};
 
+pub const DISASSEMBLY_WORK_TYPE: WorkType = WorkType::NUMBER_SUPER_SIGNED;
 pub struct DisassemblyDisplay<'a> {
     pub constructor: &'a ConstructorStruct,
     pub display_param: &'a Ident,
@@ -27,13 +26,11 @@ pub struct DisassemblyDisplay<'a> {
 impl<'a> DisassemblyDisplay<'a> {
     fn inst_start(&self) -> TokenStream {
         let inst_start = &self.inst_start;
-        let int_type = WorkType::int_type(true);
-        quote! {#int_type::try_from(#inst_start).unwrap()}
+        quote! {#DISASSEMBLY_WORK_TYPE::try_from(#inst_start).unwrap()}
     }
     fn inst_next(&self) -> TokenStream {
         let inst_next = &self.inst_next;
-        let int_type = WorkType::int_type(true);
-        quote! {#int_type::try_from(#inst_next).unwrap()}
+        quote! {#DISASSEMBLY_WORK_TYPE::try_from(#inst_next).unwrap()}
     }
     //get var name on that contains the this assembly field value
     fn ass_field(
@@ -70,7 +67,7 @@ impl<'a> DisassemblyDisplay<'a> {
         let field_name = &field.name;
         let disassembler = self.constructor.disassembler.upgrade().unwrap();
         let addr_type = &disassembler.inst_work_type;
-        use sleigh_rs::semantic::table::ExecutionExport;
+        use sleigh_rs::table::ExecutionExport;
         match table.export {
             ExecutionExport::Const(len) => {
                 //TODO allow table to export value with addr diff from addr_len
@@ -116,12 +113,13 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
             .global_set_trait
             .context(sleigh_context.element());
         let addr_type = &disassembler.inst_work_type;
-        use sleigh_rs::semantic::disassembly::AddrScope::*;
+        use sleigh_rs::disassembly::AddrScope::*;
         let address = match &global_set.address {
-            Integer(value) => proc_macro2::Literal::i64_suffixed(*value as i64)
-                .into_token_stream(),
+            Integer(value) => {
+                let value = value.unsuffixed();
+                quote! { Some(#value) }
+            }
             Varnode(_varnode) => {
-                //TODO solve IntTypeS instead of i64
                 quote! { None }
             }
             Local(var) => {
@@ -153,13 +151,12 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
 
     fn value(
         &self,
-        value: &'b sleigh_rs::semantic::disassembly::ReadScope,
+        value: &'b sleigh_rs::disassembly::ReadScope,
     ) -> TokenStream {
-        use sleigh_rs::semantic::disassembly::ReadScope;
+        use sleigh_rs::disassembly::ReadScope;
         match value {
             ReadScope::Integer(value) => {
-                proc_macro2::Literal::i64_suffixed(*value as i64)
-                    .into_token_stream()
+                value.signed_super().suffixed().into_token_stream()
             }
             ReadScope::Context(varnode) => {
                 let sleigh_context = varnode.element();
@@ -195,8 +192,7 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
                 let entry =
                     entry.insert(ParsedField::new(var_name, Rc::clone(var)));
                 let name = &entry.name;
-                let work_type = WorkType::int_type(true);
-                quote! {let mut #name: #work_type = 0;}
+                quote! {let mut #name: #DISASSEMBLY_WORK_TYPE = 0;}
             }
         }
     }
@@ -222,8 +218,7 @@ pub struct DisassemblyPattern<'a> {
 impl<'a> DisassemblyPattern<'a> {
     fn inst_start(&self) -> TokenStream {
         let inst_start = &self.inst_start;
-        let int_type = WorkType::int_type(true);
-        quote! {#int_type::try_from(#inst_start).unwrap()}
+        quote! {#DISASSEMBLY_WORK_TYPE::try_from(#inst_start).unwrap()}
     }
     //get var name on that contains the this assembly field value
     fn ass_field(
@@ -246,12 +241,9 @@ impl<'a> DisassemblyPattern<'a> {
                 &context,
             )
     }
-    fn can_execute(
-        &self,
-        expr: &sleigh_rs::semantic::disassembly::Expr,
-    ) -> bool {
-        use sleigh_rs::semantic::disassembly::ExprElement::*;
-        use sleigh_rs::semantic::disassembly::ReadScope::*;
+    fn can_execute(&self, expr: &sleigh_rs::disassembly::Expr) -> bool {
+        use sleigh_rs::disassembly::ExprElement::*;
+        use sleigh_rs::disassembly::ReadScope::*;
         expr.elements().iter().all(|element| match element {
             Op(_) | OpUnary(_) => true,
             Value(value) => match value {
@@ -271,7 +263,7 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyPattern<'a> {
     ) -> TokenStream {
         let mut tokens = TokenStream::new();
         for ass in assertations {
-            use sleigh_rs::semantic::disassembly::Assertation::*;
+            use sleigh_rs::disassembly::Assertation::*;
             match ass {
                 GlobalSet(_) => (),
                 Assignment(ass) => {
@@ -291,13 +283,12 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyPattern<'a> {
 
     fn value(
         &self,
-        value: &'b sleigh_rs::semantic::disassembly::ReadScope,
+        value: &'b sleigh_rs::disassembly::ReadScope,
     ) -> TokenStream {
-        use sleigh_rs::semantic::disassembly::ReadScope;
+        use sleigh_rs::disassembly::ReadScope;
         match value {
             ReadScope::Integer(value) => {
-                proc_macro2::Literal::i64_suffixed(*value as i64)
-                    .into_token_stream()
+                value.signed_super().suffixed().into_token_stream()
             }
             ReadScope::Context(varnode) => {
                 let sleigh_context = varnode.element();
@@ -342,8 +333,7 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyPattern<'a> {
                 let entry =
                     entry.insert(ParsedField::new(var_name, Rc::clone(var)));
                 let name = &entry.name;
-                let work_type = WorkType::int_type(true);
-                quote! {let mut #name: #work_type = 0;}
+                quote! {let mut #name: #DISASSEMBLY_WORK_TYPE = 0;}
             }
         }
     }

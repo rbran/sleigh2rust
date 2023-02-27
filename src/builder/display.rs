@@ -5,6 +5,7 @@ use quote::{quote, ToTokens};
 
 use super::{RegistersEnum, WorkType};
 
+pub const DISPLAY_WORK_TYPE: WorkType = super::DISASSEMBLY_WORK_TYPE;
 #[derive(Debug, Clone)]
 pub struct DisplayElement {
     name: Ident,
@@ -25,9 +26,6 @@ impl DisplayElement {
             number,
             registers,
         })
-    }
-    pub fn var_number_type() -> WorkType {
-        WorkType::int_type(true)
     }
     pub fn name(&self) -> &Ident {
         &self.name
@@ -51,14 +49,13 @@ impl ToTokens for DisplayElement {
             number,
             registers,
         } = self;
-        let number_type = WorkType::int_type(true);
         let register_enum = registers.name();
         tokens.extend(quote! {
             #[derive(Clone, Copy, Debug)]
             pub enum #name {
                 #named(&'static str),
                 #register(#register_enum),
-                #number(bool, #number_type),
+                #number(bool, #DISPLAY_WORK_TYPE),
             }
             impl core::fmt::Display for #name {
                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {

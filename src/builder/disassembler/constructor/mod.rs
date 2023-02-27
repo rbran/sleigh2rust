@@ -4,7 +4,7 @@ use std::rc::{Rc, Weak};
 
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use sleigh_rs::semantic::disassembly::GlobalSet;
+use sleigh_rs::disassembly::GlobalSet;
 
 use crate::builder::formater::from_sleigh;
 use crate::builder::{DisassemblyGenerator, TokenFieldStruct};
@@ -146,10 +146,10 @@ impl ConstructorStruct {
 
         //include on the enum all the required fields from the display
         for display in sleigh.display.elements().iter() {
-            use sleigh_rs::semantic::display::DisplayScope::*;
+            use sleigh_rs::display::DisplayScope::*;
             match display {
                 Context(_) | InstStart(_) | InstNext(_) | Varnode(_)
-                | Literal(_) => (),
+                | Literal(_) | Space => (),
                 TokenField(ass) => {
                     ass_fields.entry(ass.element_ptr()).or_insert(ass);
                 }
@@ -180,7 +180,7 @@ impl ConstructorStruct {
             .flatten()
             .chain(sleigh.pattern.disassembly_pos_match())
         {
-            use sleigh_rs::semantic::disassembly;
+            use sleigh_rs::disassembly;
             match field {
                 disassembly::Assertation::GlobalSet(GlobalSet {
                     address: _,
@@ -190,8 +190,8 @@ impl ConstructorStruct {
                     disassembly::Assignment { left: _, right },
                 ) => {
                     for ele in right.elements().iter() {
-                        use sleigh_rs::semantic::disassembly::ExprElement::*;
-                        use sleigh_rs::semantic::disassembly::ReadScope::*;
+                        use sleigh_rs::disassembly::ExprElement::*;
+                        use sleigh_rs::disassembly::ReadScope::*;
                         match ele {
                             Value(value) => match value {
                                 Context(_) | InstStart(_) | InstNext(_)
@@ -270,7 +270,7 @@ impl ConstructorStruct {
         let register_enum = disassembler.registers.name();
         let inst_work_type = &disassembler.inst_work_type;
 
-        use sleigh_rs::semantic::display::DisplayScope;
+        use sleigh_rs::display::DisplayScope;
         let mut disassembly = DisassemblyDisplay {
             constructor: self,
             display_param: &display_param,
@@ -337,6 +337,9 @@ impl ConstructorStruct {
                             let vars = disassembly.vars.borrow();
                             let var = &vars.get(&ptr).unwrap().name;
                             quote! {#display_element::#var_number(true, #var)}
+                        }
+                        DisplayScope::Space => {
+                            quote! {#display_element::#var_literal(" ")}
                         }
                         DisplayScope::Literal(literal) => {
                             quote! {#display_element::#var_literal(#literal)}

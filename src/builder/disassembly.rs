@@ -3,42 +3,35 @@ use std::rc::Rc;
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 
-use sleigh_rs::semantic::disassembly::{
+use sleigh_rs::disassembly::{
     Assertation, Assignment, Expr, ExprElement, GlobalSet, Op, OpUnary,
     ReadScope, Variable,
 };
-use sleigh_rs::semantic::GlobalAnonReference;
 use sleigh_rs::Context;
+use sleigh_rs::GlobalAnonReference;
 
 fn disassembly_op(x: impl ToTokens, op: &Op, y: impl ToTokens) -> TokenStream {
-    if crate::DISASSEMBLY_ALLOW_OVERFLOW {
-        match op {
-            Op::Add => quote! {#x.wrapping_add(#y)},
-            Op::Sub => quote! {#x.wrapping_sub(#y)},
-            Op::Mul => quote! {#x.wrapping_mul(#y)},
-            Op::Div => quote! {#x.wrapping_div(#y)},
-            Op::Asr => quote! {
-                #x.checked_shr(u32::try_from(#y).unwrap()).unwrap_or(0)
-            },
-            Op::Lsl => quote! {
-                #x.checked_shl(u32::try_from(#y).unwrap()).unwrap_or(0)
-            },
-            Op::And => quote! {(#x & #y)},
-            Op::Or => quote! {(#x | #y)},
-            Op::Xor => quote! {(#x ^ #y)},
-        }
-    } else {
-        match op {
-            Op::Add => quote! {(#x + #y)},
-            Op::Sub => quote! {(#x - #y)},
-            Op::Mul => quote! {(#x * #y)},
-            Op::Div => quote! {(#x / #y)},
-            Op::Asr => quote! {(#x >> #y)},
-            Op::Lsl => quote! {(#x << #y)},
-            Op::And => quote! {(#x & #y)},
-            Op::Or => quote! {(#x | #y)},
-            Op::Xor => quote! {(#x ^ #y)},
-        }
+    match (crate::DISASSEMBLY_ALLOW_OVERFLOW, op) {
+        (true, Op::Add) => quote! {#x.wrapping_add(#y)},
+        (true, Op::Sub) => quote! {#x.wrapping_sub(#y)},
+        (true, Op::Mul) => quote! {#x.wrapping_mul(#y)},
+        (true, Op::Div) => quote! {#x.wrapping_div(#y)},
+        (true, Op::Asr) => quote! {
+            u32::try_from(#y).ok().map(|shr| #x.checked_shr(shr)).flatten().unwrap_or(0)
+        },
+        (true, Op::Lsl) => quote! {
+            u32::try_from(#y).ok().map(|shl| #x.checked_shl(shl)).flatten().unwrap_or(0)
+        },
+        (false, Op::Add) => quote! {(#x + #y)},
+        (false, Op::Sub) => quote! {(#x - #y)},
+        (false, Op::Mul) => quote! {(#x * #y)},
+        (false, Op::Div) => quote! {(#x / #y)},
+        (false, Op::Asr) => quote! {(#x >> #y)},
+        (false, Op::Lsl) => quote! {(#x << #y)},
+        //bit op, works the same way unsigned/signed, so use unsigned
+        (_, Op::And) => quote! {(#x & #y)},
+        (_, Op::Or) => quote! {(#x | #y)},
+        (_, Op::Xor) => quote! {(#x ^ #y)},
     }
 }
 fn op_unary(op: &OpUnary, x: impl ToTokens) -> TokenStream {
@@ -94,7 +87,7 @@ pub trait DisassemblyGenerator<'a> {
         quote! { #var_name = #value; }
     }
     fn assignment(&self, ass: &'a Assignment) -> TokenStream {
-        use sleigh_rs::semantic::disassembly::WriteScope::*;
+        use sleigh_rs::disassembly::WriteScope::*;
         let value = self.expr(ass.right());
         match ass.left() {
             Context(context) => {
@@ -110,7 +103,7 @@ pub trait DisassemblyGenerator<'a> {
     ) -> TokenStream {
         assertations
             .map(|ass| {
-                use sleigh_rs::semantic::disassembly::Assertation::*;
+                use sleigh_rs::disassembly::Assertation::*;
                 match ass {
                     GlobalSet(global) => self.global_set(global),
                     Assignment(ass) => self.assignment(ass),

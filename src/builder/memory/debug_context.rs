@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use sleigh_rs::semantic::{GlobalAnonReference, GlobalElement};
+use sleigh_rs::{GlobalAnonReference, GlobalElement};
 
 use crate::builder::{formater::*, ToLiteral};
 

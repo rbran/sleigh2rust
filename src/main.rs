@@ -304,7 +304,7 @@ fn parse(arch: &str, variant: &str) -> Result<(), Box<dyn std::error::Error>> {
         "/home/rbran/src/ghidra/Ghidra/Processors/{}/data/languages/{}.slaspec",
         arch, variant
     );
-    let sleigh = sleigh_rs::file_to_sleigh(&in_file_name)?;
+    let sleigh = sleigh_rs::file_to_sleigh(Path::new(&in_file_name))?;
     let sleigh = Rc::new(sleigh);
 
     let out_file_path = Path::new("/home/rbran/src/sleigh3rust")

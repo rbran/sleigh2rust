@@ -3,17 +3,13 @@ use std::rc::Rc;
 
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use sleigh_rs::semantic::disassembly::{
-    self, Assertation, GlobalSet, Variable,
-};
-use sleigh_rs::semantic::pattern::{
-    ProducedTable, ProducedTokenField, Verification,
-};
-use sleigh_rs::semantic::GlobalAnonReference;
+use sleigh_rs::disassembly::{self, Assertation, GlobalSet, Variable};
+use sleigh_rs::pattern::{ProducedTable, ProducedTokenField, Verification};
+use sleigh_rs::GlobalAnonReference;
 use sleigh_rs::{IntTypeU, NonZeroTypeU};
 
 use crate::builder::formater::from_sleigh;
-use crate::builder::{Disassembler, DisassemblyGenerator};
+use crate::builder::{Disassembler, DisassemblyGenerator, ToLiteral};
 
 use super::{ConstructorStruct, DisassemblyPattern, ParsedField, TableField};
 
@@ -584,7 +580,7 @@ fn body_block_and_pos(
                     field_name
                 });
                 let sub_pattern_name =
-                    format_ident!("sub_pattern_c{}", location.column);
+                    format_ident!("sub_pattern_c{}", location.start_column());
                 Some(quote! {
                     let mut #sub_pattern_name = #sub_func;
                     let (
@@ -765,7 +761,7 @@ fn block_or_closure(
                     root_token_fields,
                 );
                 let sub_pattern_name =
-                    format_ident!("sub_pattern_c{}", location.column);
+                    format_ident!("sub_pattern_c{}", location.start_column());
                 let tables: IndexMap<_, _> = pattern
                     .tables()
                     .map(|field_table| {
@@ -880,28 +876,24 @@ fn produced_table(
     }
 }
 
-fn pattern_cmp_token(
-    value: &sleigh_rs::semantic::pattern::CmpOp,
-) -> TokenStream {
+fn pattern_cmp_token(value: &sleigh_rs::pattern::CmpOp) -> TokenStream {
     match value {
-        sleigh_rs::semantic::pattern::CmpOp::Eq => quote!(==),
-        sleigh_rs::semantic::pattern::CmpOp::Ne => quote!(!=),
-        sleigh_rs::semantic::pattern::CmpOp::Lt => quote!(<),
-        sleigh_rs::semantic::pattern::CmpOp::Gt => quote!(>),
-        sleigh_rs::semantic::pattern::CmpOp::Le => quote!(<=),
-        sleigh_rs::semantic::pattern::CmpOp::Ge => quote!(>=),
+        sleigh_rs::pattern::CmpOp::Eq => quote!(==),
+        sleigh_rs::pattern::CmpOp::Ne => quote!(!=),
+        sleigh_rs::pattern::CmpOp::Lt => quote!(<),
+        sleigh_rs::pattern::CmpOp::Gt => quote!(>),
+        sleigh_rs::pattern::CmpOp::Le => quote!(<=),
+        sleigh_rs::pattern::CmpOp::Ge => quote!(>=),
     }
 }
-fn pattern_cmp_token_neg(
-    value: &sleigh_rs::semantic::pattern::CmpOp,
-) -> TokenStream {
+fn pattern_cmp_token_neg(value: &sleigh_rs::pattern::CmpOp) -> TokenStream {
     match value {
-        sleigh_rs::semantic::pattern::CmpOp::Eq => quote!(!=),
-        sleigh_rs::semantic::pattern::CmpOp::Ne => quote!(==),
-        sleigh_rs::semantic::pattern::CmpOp::Lt => quote!(>=),
-        sleigh_rs::semantic::pattern::CmpOp::Gt => quote!(<=),
-        sleigh_rs::semantic::pattern::CmpOp::Le => quote!(>),
-        sleigh_rs::semantic::pattern::CmpOp::Ge => quote!(<),
+        sleigh_rs::pattern::CmpOp::Eq => quote!(!=),
+        sleigh_rs::pattern::CmpOp::Ne => quote!(==),
+        sleigh_rs::pattern::CmpOp::Lt => quote!(>=),
+        sleigh_rs::pattern::CmpOp::Gt => quote!(<=),
+        sleigh_rs::pattern::CmpOp::Le => quote!(>),
+        sleigh_rs::pattern::CmpOp::Ge => quote!(<),
     }
 }
 
@@ -939,13 +931,12 @@ impl<'a, 'b> DisassemblyGenerator<'a> for BlockParserValuesDisassembly<'b> {
     }
     fn value(
         &self,
-        value: &'a sleigh_rs::semantic::disassembly::ReadScope,
+        value: &'a sleigh_rs::disassembly::ReadScope,
     ) -> TokenStream {
-        use sleigh_rs::semantic::disassembly::*;
+        use sleigh_rs::disassembly::*;
         match value {
             ReadScope::Integer(value) => {
-                proc_macro2::Literal::i64_suffixed(*value as i64)
-                    .into_token_stream()
+                value.signed_super().suffixed().into_token_stream()
             }
             ReadScope::Context(context) => {
                 let context = context.element();

@@ -29,11 +29,27 @@ pub use meaning::*;
 
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use sleigh_rs::{IntTypeU, NonZeroTypeU};
+use sleigh_rs::{
+    IntTypeU, NonZeroTypeU, Number, NumberNonZeroSigned,
+    NumberNonZeroSuperSigned, NumberNonZeroUnsigned, NumberSigned,
+    NumberSuperSigned, NumberUnsigned,
+};
 
 trait ToLiteral {
     fn suffixed(&self) -> Literal;
     fn unsuffixed(&self) -> Literal;
+}
+
+impl ToLiteral for Number {
+    fn suffixed(&self) -> Literal {
+        self.signed()
+            .map(Literal::i64_suffixed)
+            .unwrap_or_else(|| self.unsuffixed())
+    }
+
+    fn unsuffixed(&self) -> Literal {
+        Literal::i128_unsuffixed(self.signed_super())
+    }
 }
 
 macro_rules! impl_to_literal {
@@ -80,14 +96,28 @@ pub enum WorkType {
 }
 
 impl WorkType {
+    const NUMBER_UNSIGNED: Self =
+        Self::const_creator(NumberUnsigned::BITS, false);
+    const NUMBER_SIGNED: Self = Self::const_creator(NumberSigned::BITS, true);
+    const NUMBER_SUPER_SIGNED: Self =
+        Self::const_creator(NumberSuperSigned::BITS, true);
+
+    const NUMBER_NON_ZERO_UNSIGNED: Self =
+        Self::const_creator(NumberNonZeroUnsigned::BITS, false);
+    const NUMBER_NON_ZERO_SIGNED: Self =
+        Self::const_creator(NumberNonZeroSigned::BITS, true);
+    const NUMBER_NON_ZERO_SUPER_SIGNED: Self =
+        Self::const_creator(NumberNonZeroSuperSigned::BITS, true);
+
+    const fn const_creator(bits: u32, signed: bool) -> Self {
+        let Some(bits) = NonZeroTypeU::new((bits as NumberUnsigned + 7) / 8) else { unreachable!() };
+        Self::new_int_bytes(bits, signed)
+    }
+
     pub fn new_array(bytes: NonZeroTypeU) -> Self {
         Self::Array(bytes)
     }
-    pub fn int_type(signed: bool) -> Self {
-        let bits = IntTypeU::try_from(IntTypeU::BITS).unwrap();
-        Self::new_int_bits(NonZeroTypeU::try_from(bits).unwrap(), signed)
-    }
-    pub fn new_int_bytes(bytes: NonZeroTypeU, signed: bool) -> Self {
+    pub const fn new_int_bytes(bytes: NonZeroTypeU, signed: bool) -> Self {
         match bytes.get() {
             0 => unreachable!(),
             1 if signed => Self::I8,
@@ -102,11 +132,11 @@ impl WorkType {
             5..=8 /*if !signed*/ => Self::U64,
             9..=16 /*if !signed*/ => Self::U128,
             17..=32 /*if !signed*/ => Self::U256,
-            x => unreachable!("WorkType bytes: {}", x),
+            _x => todo!(),
         }
     }
-    pub fn new_int_bits(bits: NonZeroTypeU, signed: bool) -> Self {
-        let bytes = NonZeroTypeU::new((bits.get() + 7) / 8).unwrap();
+    pub const fn new_int_bits(bits: NonZeroTypeU, signed: bool) -> Self {
+        let Some(bytes) = NonZeroTypeU::new((bits.get() + 7) / 8) else { unreachable!() };
         Self::new_int_bytes(bytes, signed)
     }
     pub fn unsigned_from_bytes(bytes: NonZeroTypeU) -> Self {

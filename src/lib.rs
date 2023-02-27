@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use builder::Disassembler;
 
-use sleigh_rs::semantic::Sleigh;
+use sleigh_rs::Sleigh;
 
 pub const DISASSEMBLY_ALLOW_OVERFLOW: bool = true;
 

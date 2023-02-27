@@ -5,10 +5,10 @@ use indexmap::IndexMap;
 use proc_macro2::{Ident, TokenStream};
 use quote::ToTokens;
 use quote::{format_ident, quote};
-use sleigh_rs::semantic::GlobalAnonReference;
-use sleigh_rs::semantic::GlobalElement;
+use sleigh_rs::GlobalAnonReference;
+use sleigh_rs::GlobalElement;
 
-use super::{formater::*, SpacesTrait};
+use super::{formater::*, SpacesTrait, DISASSEMBLY_WORK_TYPE};
 use super::{Disassembler, WorkType};
 
 #[derive(Debug, Clone)]
@@ -78,7 +78,6 @@ impl ToTokens for GlobalSetStruct {
             (Some(gen_declaration), Some(gen_use), Some(struct_data))
         };
         let functions = global_set_trait.varnodes.values().map(|gs_context| {
-            let int_type = WorkType::int_type(true);
             let name = &gs_context.function;
             let context = gs_context.sleigh.element();
             let context_space = context.varnode().space();
@@ -86,7 +85,7 @@ impl ToTokens for GlobalSetStruct {
             let context_space_fun = context_space.function_mut.as_ref().unwrap();
             let write_context_fun = &context_space.type_trait.contexts.get(&context.element_ptr()).unwrap().write.as_ref().unwrap().1;
             quote!{
-                fn #name(&mut self, inst_start: Option<#addr_type>, value: #int_type) {
+                fn #name(&mut self, inst_start: Option<#addr_type>, value: #DISASSEMBLY_WORK_TYPE) {
                     let Some(inst_start) = inst_start else {
                         return
                     };
@@ -152,12 +151,11 @@ impl ToTokens for GlobalSetTrait {
         let addr_type = &self.addr_type;
         let functions = self.varnodes.values().map(|var| {
             let function = &var.function;
-            let value_type = WorkType::int_type(true);
             quote! {
                 fn #function(
                     &mut self,
                     address: Option<#addr_type>,
-                    value: #value_type,
+                    value: #DISASSEMBLY_WORK_TYPE,
                 );
             }
         });
