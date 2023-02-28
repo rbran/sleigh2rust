@@ -53,15 +53,15 @@ impl SpaceStructDebug {
             let chunk_name = chunk.ident();
             quote! {
                 (#chunk_start..=#chunk_end_excl, #chunk_start..=#chunk_end) => {
-                    let bit_offset = usize::try_from(#addr_param - #chunk_start).unwrap() * 8;
-                    for ((buf_byte, mask_byte), chunk_index) in
-                        #buf_param.iter_mut().zip(#mask_param.iter()).zip(bit_offset..)
+                    let byte_offset = usize::try_from(#addr_param - #chunk_start).unwrap();
+                    for ((buf_byte, mask_byte), byte) in
+                        #buf_param.iter_mut().zip(#mask_param.iter()).zip(byte_offset..)
                     {
                         for bit in (0..8)
                             .into_iter()
                             .filter(|bit| ((*mask_byte >> bit) & 1) != 0)
                         {
-                            *buf_byte |= (self.#chunk_name[chunk_index + bit].unwrap()
+                            *buf_byte |= (self.#chunk_name[(byte * 8) + bit].unwrap()
                                 as u8)
                                 << bit;
                         }
@@ -111,15 +111,15 @@ impl SpaceStructDebug {
             let chunk_name = chunk.ident();
             quote! {
                 (#chunk_start..=#chunk_end_excl, #chunk_start..=#chunk_end) => {
-                    let bit_offset = usize::try_from(#addr_param - #chunk_start).unwrap() * 8;
-                    for ((buf_byte, mask_byte), chunk_index) in
-                        #buf_param.iter().zip(#mask_param.iter()).zip(bit_offset..)
+                    let byte_offset = usize::try_from(#addr_param - #chunk_start).unwrap();
+                    for ((buf_byte, mask_byte), byte) in
+                        #buf_param.iter().zip(#mask_param.iter()).zip(byte_offset..)
                     {
                         for bit in (0..8)
                             .into_iter()
                             .filter(|bit| ((*mask_byte >> bit) & 1) != 0)
                         {
-                            self.#chunk_name[chunk_index + bit] =
+                            self.#chunk_name[(byte * 8) + bit] =
                                 Some(*buf_byte & (1 << bit) != 0);
                         }
                     }
