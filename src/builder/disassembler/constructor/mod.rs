@@ -145,11 +145,11 @@ impl ConstructorStruct {
             .collect();
 
         //include on the enum all the required fields from the display
-        for display in sleigh.display.elements().iter() {
-            use sleigh_rs::display::DisplayScope::*;
+        for display in sleigh.display.elements() {
+            use sleigh_rs::display::DisplayScopeElements::*;
             match display {
                 Context(_) | InstStart(_) | InstNext(_) | Varnode(_)
-                | Literal(_) | Space => (),
+                | Literal(_) | Mneumonic(_) | Space => (),
                 TokenField(ass) => {
                     ass_fields.entry(ass.element_ptr()).or_insert(ass);
                 }
@@ -225,10 +225,21 @@ impl ConstructorStruct {
             })
             .collect();
 
+        let struct_name = if let Some(mneumonic) = sleigh.display.mneumonic() {
+            format_ident!(
+                "{}_{}Var{}",
+                from_sleigh(mneumonic),
+                table_name,
+                number
+            )
+        } else {
+            format_ident!("{}Var{}", table_name, number)
+        };
+
         Self {
             sleigh,
             variant_name: format_ident!("Var{}", number),
-            struct_name: format_ident!("{}Var{}", table_name, number),
+            struct_name,
             display_fun: format_ident!("display_extend"),
             disassembly_fun: format_ident!("disassembly"),
             parser_fun: format_ident!("parse"),
@@ -270,7 +281,7 @@ impl ConstructorStruct {
         let register_enum = disassembler.registers.name();
         let inst_work_type = &disassembler.inst_work_type;
 
-        use sleigh_rs::display::DisplayScope;
+        use sleigh_rs::display::DisplayScopeElements as DisplayScope;
         let mut disassembly = DisassemblyDisplay {
             constructor: self,
             display_param: &display_param,
@@ -288,10 +299,8 @@ impl ConstructorStruct {
             .map(|var| disassembly.new_variable(var))
             .collect();
         disassembly_body.extend(disassembly.to_token_stream());
-        let displays = self
-            .sleigh
-            .display
-            .elements()
+        let elements: Vec<_> = self.sleigh.display.elements().collect();
+        let displays = elements
             .split_inclusive(|ele| matches!(ele, DisplayScope::Table(_)))
             .map(|eles| {
                 let (ele, table) = match eles {
@@ -342,6 +351,9 @@ impl ConstructorStruct {
                             quote! {#display_element::#var_literal(" ")}
                         }
                         DisplayScope::Literal(literal) => {
+                            quote! {#display_element::#var_literal(#literal)}
+                        }
+                        DisplayScope::Mneumonic(literal) => {
                             quote! {#display_element::#var_literal(#literal)}
                         }
                         DisplayScope::Table(_) => unreachable!(),

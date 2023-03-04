@@ -47,8 +47,8 @@ impl RegistersEnum {
         };
         for table in sleigh.tables() {
             for constructor in table.constructors.iter() {
-                for element in constructor.display.elements().iter() {
-                    use sleigh_rs::display::DisplayScope::*;
+                for element in constructor.display.elements() {
+                    use sleigh_rs::display::DisplayScopeElements::*;
                     match element {
                         Varnode(var) => add_reg(var.element()),
                         Context(context) => {
@@ -58,7 +58,7 @@ impl RegistersEnum {
                             add_attach(token_field.element().meaning())
                         }
                         InstStart(_) | InstNext(_) | Disassembly(_)
-                        | Table(_) | Literal(_) | Space => (),
+                        | Table(_) | Literal(_) | Mneumonic(_) | Space => (),
                     }
                 }
             }
