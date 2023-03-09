@@ -7,6 +7,7 @@ use ethnum::u256;
 pub use memory::*;
 
 mod token;
+use sleigh_rs::Number;
 pub use token::*;
 
 mod disassembly;
@@ -29,8 +30,8 @@ pub use meaning::*;
 
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use sleigh_rs::{
-    IntTypeU, NonZeroTypeU, Number, NumberNonZeroSigned,
+use sleigh4rust::{
+    IntTypeU, NonZeroTypeU, NumberNonZeroSigned,
     NumberNonZeroSuperSigned, NumberNonZeroUnsigned, NumberSigned,
     NumberSuperSigned, NumberUnsigned,
 };

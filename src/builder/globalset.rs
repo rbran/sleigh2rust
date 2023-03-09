@@ -124,10 +124,7 @@ impl GlobalSetTrait {
                 (context.element_ptr(), GlobalSetContext::new(context))
             })
             .collect();
-        let addr_type = WorkType::new_int_bytes(
-            sleigh.addr_len_bytes().get().try_into().unwrap(),
-            false,
-        );
+        let addr_type = WorkType::new_int_bytes(sleigh.addr_len_bytes(), false);
         Self {
             name,
             varnodes,

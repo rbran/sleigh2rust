@@ -100,6 +100,7 @@ version = "0.1.0"
 dependencies = [
  "indexmap",
  "nom",
+ "sleigh4rust",
  "thiserror",
 ]
 

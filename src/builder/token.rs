@@ -4,7 +4,7 @@ use std::rc::Rc;
 use proc_macro2::{Ident, TokenStream};
 use quote::ToTokens;
 use quote::{format_ident, quote};
-use sleigh_rs::NonZeroTypeU;
+use sleigh4rust::NonZeroTypeU;
 use sleigh_rs::{GlobalAnonReference, GlobalElement};
 
 use crate::builder::formater::*;

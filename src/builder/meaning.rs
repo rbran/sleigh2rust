@@ -4,7 +4,8 @@ use std::rc::Rc;
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use sleigh_rs::{GlobalReference, PrintBase, PrintFmt};
-use sleigh_rs::{NonZeroTypeU, Number, NumberSuperSigned};
+use sleigh_rs::Number;
+use sleigh4rust::{NonZeroTypeU, NumberSuperSigned};
 
 use super::{DisplayElement, RegistersEnum, WorkType, DISPLAY_WORK_TYPE};
 

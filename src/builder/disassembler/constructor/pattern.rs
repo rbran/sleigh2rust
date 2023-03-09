@@ -6,7 +6,7 @@ use quote::{format_ident, quote, ToTokens};
 use sleigh_rs::disassembly::{self, Assertation, GlobalSet, Variable};
 use sleigh_rs::pattern::{ProducedTable, ProducedTokenField, Verification};
 use sleigh_rs::GlobalAnonReference;
-use sleigh_rs::{IntTypeU, NonZeroTypeU};
+use sleigh4rust::{IntTypeU, NonZeroTypeU};
 
 use crate::builder::formater::from_sleigh;
 use crate::builder::{Disassembler, DisassemblyGenerator, ToLiteral};
