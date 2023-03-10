@@ -1,8 +1,8 @@
-use std::rc::Rc;
+use std::{rc::Rc, path::Path};
 
 use builder::Disassembler;
 
-use sleigh_rs::Sleigh;
+use sleigh_rs::{Sleigh, SleighError, file_to_sleigh};
 
 pub const DISASSEMBLY_ALLOW_OVERFLOW: bool = true;
 
@@ -28,6 +28,11 @@ pub mod builder;
 //    }
 //}
 
-pub fn dis<'a>(sleigh: Rc<Sleigh>) -> Rc<Disassembler> {
+pub fn dis(sleigh: Rc<Sleigh>) -> Rc<Disassembler> {
     Disassembler::new(sleigh)
+}
+
+pub fn parse(file: &Path) -> Result<Rc<Disassembler>, SleighError> {
+    let sleigh = file_to_sleigh(file)?;
+    Ok(Disassembler::new(Rc::new(sleigh)))
 }

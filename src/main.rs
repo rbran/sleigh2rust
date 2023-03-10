@@ -332,13 +332,17 @@ fn main() {
     for (arch, variants) in ARCH_FILES.iter() {
         for variant in variants.iter() {
             println!("arch {} {}", arch, variant);
-            match parse(arch, variant) {
-                Ok(_) => (),
-                Err(e) => {
-                    println!("unable: {}", e);
-                    return;
-                }
-            }
+            let lib_variant = variant.to_lowercase().replace('-', "_");
+            let build = format!(
+                r#"sed -i "s/pub mod disassembler/mod disassembler/" /home/rbran/src/sleigh3rust/{}/src/lib.rs"#,
+                lib_variant
+            );
+            let output = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(build)
+                .output()
+                .unwrap();
+            println!("output {}", String::from_utf8_lossy(&output.stdout));
         }
     }
 }
