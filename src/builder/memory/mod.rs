@@ -5,7 +5,7 @@ use std::rc::Rc;
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use sleigh4rust::{IntTypeU, NonZeroTypeU};
-use sleigh_rs::{GlobalAnonReference, GlobalElement};
+use sleigh_rs::{GlobalAnonReference, GlobalElement, Space};
 
 use crate::builder::formater::*;
 
@@ -13,13 +13,61 @@ use super::{
     DisplayElement, Meanings, ToLiteral, WorkType, DISASSEMBLY_WORK_TYPE,
 };
 
-mod debug_context;
+mod debug;
+use debug::*;
+
+mod release;
+use release::*;
+
+#[derive(Debug, Clone)]
+pub enum SpaceStruct {
+    Debug(SpaceStructDebug),
+    Release(SpaceStructRelease),
+}
+
+impl SpaceStruct {
+    fn new<I>(
+        debug: bool,
+        space: &GlobalElement<sleigh_rs::Space>,
+        space_trait: Rc<SpaceTrait>,
+        varnodes: I,
+    ) -> Self
+    where
+        I: Iterator<Item = ChunkBytes>,
+    {
+        if debug {
+            Self::Debug(SpaceStructDebug::new(space, space_trait, varnodes))
+        } else {
+            Self::Release(SpaceStructRelease::new(space, space_trait, varnodes))
+        }
+    }
+    pub fn space(&self) -> &GlobalAnonReference<Space> {
+        match self {
+            SpaceStruct::Debug(debug) => &debug.space,
+            SpaceStruct::Release(release) => &release.space,
+        }
+    }
+    pub fn name(&self) -> &Ident {
+        match self {
+            SpaceStruct::Debug(debug) => &debug.name,
+            SpaceStruct::Release(release) => &release.name,
+        }
+    }
+}
+
+impl ToTokens for SpaceStruct {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            SpaceStruct::Debug(debug) => debug.to_tokens(tokens),
+            SpaceStruct::Release(release) => release.to_tokens(tokens),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct DisassemblerMemory {
     pub space_traits: IndexMap<*const sleigh_rs::Space, Rc<SpaceTrait>>,
-    pub space_structs:
-        IndexMap<*const sleigh_rs::Space, Rc<debug_context::SpaceStructDebug>>,
+    pub space_structs: IndexMap<*const sleigh_rs::Space, Rc<SpaceStruct>>,
     pub spaces_trait: Rc<SpacesTrait>,
     pub spaces_struct: Rc<SpacesStruct>,
 }
@@ -70,30 +118,31 @@ impl DisassemblerMemory {
             space_traits.values(),
         );
 
-        let space_structs: IndexMap<
-            *const sleigh_rs::Space,
-            Rc<debug_context::SpaceStructDebug>,
-        > = spaces
-            .iter()
-            .map(|space| {
-                let ptr = space.element_ptr();
-                let space_struct = debug_context::SpaceStructDebug::new(
-                    space,
-                    Rc::clone(space_traits.get(&space.element_ptr()).unwrap()),
-                    sleigh
-                        .contexts()
-                        .filter(|context| {
-                            context.varnode().space().element_ptr()
-                                == space.element_ptr()
-                        })
-                        .map(|context| ChunkBytes {
-                            offset: context.varnode().offset,
-                            len: context.varnode().len_bytes,
-                        }),
-                );
-                (ptr, space_struct)
-            })
-            .collect();
+        let space_structs: IndexMap<*const sleigh_rs::Space, Rc<SpaceStruct>> =
+            spaces
+                .iter()
+                .map(|space| {
+                    let ptr = space.element_ptr();
+                    let space_struct = SpaceStruct::new(
+                        true, //TODO have a option to enable/disable debug
+                        space,
+                        Rc::clone(
+                            space_traits.get(&space.element_ptr()).unwrap(),
+                        ),
+                        sleigh
+                            .contexts()
+                            .filter(|context| {
+                                context.varnode().space().element_ptr()
+                                    == space.element_ptr()
+                            })
+                            .map(|context| ChunkBytes {
+                                offset: context.varnode().offset,
+                                len: context.varnode().len_bytes,
+                            }),
+                    );
+                    (ptr, Rc::new(space_struct))
+                })
+                .collect();
 
         let spaces_struct =
             SpacesStruct::new(Rc::clone(&spaces_trait), space_structs.values());
@@ -719,174 +768,28 @@ impl ToTokens for SpacesTrait {
 }
 
 #[derive(Debug, Clone)]
-pub struct SpaceStruct {
-    //struct name
-    pub name: Ident,
-    //function to read from arbitrary address
-    //read: Ident,
-    //function to write to arbitrary address
-    //write: Option<Ident>,
-    pub space: GlobalAnonReference<sleigh_rs::Space>,
-    pub space_trait: Rc<SpaceTrait>,
-    pub chunks: Vec<MemoryChunk>,
-}
-
-impl SpaceStruct {
-    fn new(
-        space: &GlobalElement<sleigh_rs::Space>,
-        space_trait: Rc<SpaceTrait>,
-        varnodes: impl Iterator<Item = ChunkBytes>,
-    ) -> Rc<Self> {
-        let name = format_ident!("Context{}Struct", from_sleigh(space.name()));
-        let chunks = chunks_from_varnodes(varnodes);
-        Rc::new(Self {
-            name,
-            space: space.reference(),
-            space_trait,
-            chunks,
-        })
-    }
-    fn gen_read_fun_impl(&self) -> TokenStream {
-        let space = self.space.element();
-        let struct_name = &self.name;
-        let buf_len = format_ident!("buf_len");
-
-        let addr_type = WorkType::new_int_bytes(space.addr_bytes(), false);
-        let addr_param = format_ident!("addr");
-        let buf_param = format_ident!("buf");
-        let addr_end = format_ident!("addr_end");
-        let chunks = self.chunks.iter().map(|chunk| {
-            let chunk_start = chunk.addr_start().unsuffixed();
-            let chunk_end_excl =
-                chunk.addr_end().checked_sub(1).unwrap().unsuffixed();
-            let chunk_end = chunk.addr_end().unsuffixed();
-            let chunk_name = chunk.ident();
-            quote! {
-                (#chunk_start..=#chunk_end_excl, #chunk_start..=#chunk_end) => {
-                    let start = #addr_param - #chunk_start;
-                    let end = usize::try_from(start + #buf_len).unwrap();
-                    let start = usize::try_from(start).unwrap();
-                    #buf_param.copy_from_slice(&self.#chunk_name[start..end]);
-                }
-            }
-        });
-        quote! {
-            impl MemoryRead for #struct_name {
-                type AddressType = #addr_type;
-                fn read(
-                    &self,
-                    #addr_param: Self::AddressType,
-                    #buf_param: &mut [u8],
-                )-> Result<(), MemoryReadError<Self::AddressType>> {
-                    let #buf_len =
-                        <Self::AddressType>::try_from(#buf_param.len()).unwrap();
-                    let #addr_end = #addr_param + #buf_len;
-                    match (#addr_param, #addr_end) {
-                        #(#chunks),*
-                        (addr_start, addr_end) => {
-                            return Err(MemoryReadError::UnableToReadMemory(
-                                addr_start, addr_end,
-                            ))
-                        }
-                    }
-                    Ok(())
-                }
-            }
-        }
-    }
-    fn gen_write_fun_impl(&self) -> Option<TokenStream> {
-        let space = self.space.element();
-        if !space.can_write() {
-            return None;
-        }
-        let struct_name = &self.name;
-        let buf_len = format_ident!("buf_len");
-
-        let addr_param = format_ident!("addr");
-        let buf_param = format_ident!("buf");
-        let addr_end = format_ident!("addr_end");
-        let chunks = self.chunks.iter().map(|chunk| {
-            let chunk_start = chunk.addr_start().unsuffixed();
-            let chunk_end = chunk.addr_end().unsuffixed();
-            let chunk_end_excl =
-                chunk.addr_end().checked_sub(1).unwrap().unsuffixed();
-            let chunk_name = chunk.ident();
-            quote! {
-                (#chunk_start..=#chunk_end_excl, #chunk_start..=#chunk_end) => {
-                    let start = #addr_param - #chunk_start;
-                    let end = usize::try_from(start + #buf_len).unwrap();
-                    let start = usize::try_from(start).unwrap();
-                    self.#chunk_name[start..end].copy_from_slice(#buf_param);
-                }
-            }
-        });
-        Some(quote! {
-            impl MemoryWrite for #struct_name {
-                fn write(
-                    &mut self,
-                    #addr_param: Self::AddressType,
-                    #buf_param: &[u8],
-                ) -> Result<(), MemoryWriteError<Self::AddressType>> {
-                    let #buf_len =
-                        <Self::AddressType>::try_from(#buf_param.len()).unwrap();
-                    let #addr_end = #addr_param + #buf_len;
-                    match (#addr_param, #addr_end) {
-                        #(#chunks),*
-                        (addr_start, addr_end) => {
-                            return Err(MemoryWriteError::UnableToWriteMemory(
-                                addr_start, addr_end,
-                            ))
-                        }
-                    }
-                    Ok(())
-                }
-            }
-        })
-    }
-}
-impl ToTokens for SpaceStruct {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        let ident = &self.name;
-        let chunks = self.chunks.iter().map(MemoryChunk::struct_chunk);
-        let impl_read = self.gen_read_fun_impl();
-        let impl_write = self.gen_write_fun_impl();
-        let space_trait_name = &self.space_trait.name;
-        tokens.extend(quote! {
-            #[derive(Debug, Clone, Copy, Default)]
-            pub struct #ident {
-                #(#chunks),*
-            }
-            impl #space_trait_name for #ident {}
-            #impl_read
-            #impl_write
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
 pub struct SpacesStruct {
     //name of the global memory struct
     pub name: Ident,
     //spaces that this struct can read/write
-    pub spaces: IndexMap<
-        *const sleigh_rs::Space,
-        (Ident, Rc<debug_context::SpaceStructDebug>),
-    >,
+    pub spaces: IndexMap<*const sleigh_rs::Space, (Ident, Rc<SpaceStruct>)>,
     pub spaces_trait: Rc<SpacesTrait>,
 }
 
 impl SpacesStruct {
-    pub fn new<'a>(
-        spaces_trait: Rc<SpacesTrait>,
-        spaces: impl Iterator<Item = &'a Rc<debug_context::SpaceStructDebug>>,
-    ) -> Rc<Self> {
+    pub fn new<'a, I>(spaces_trait: Rc<SpacesTrait>, spaces: I) -> Rc<Self>
+    where
+        I: Iterator<Item = &'a Rc<SpaceStruct>>,
+    {
         let name = format_ident!("SpacesStruct");
         //iterator for all varnodes to this space
         let spaces = spaces
             .map(|space_struct| {
-                let ptr = space_struct.space.element_ptr();
-                let name =
-                    format_ident!("{}", from_sleigh(space_struct.space.name()));
+                let ptr = space_struct.space().element_ptr();
+                let name = format_ident!(
+                    "{}",
+                    from_sleigh(space_struct.space().name())
+                );
                 (ptr, (name, Rc::clone(space_struct)))
             })
             .collect();
@@ -903,7 +806,7 @@ impl ToTokens for SpacesStruct {
         let struct_name = &self.name;
         let trait_name = &self.spaces_trait.name;
         let struct_fields = self.spaces.values().map(|(space_field, space)| {
-            let struct_name = &space.name;
+            let struct_name = space.name();
             //TODO don't make it public, make a default or creator function
             quote! {pub #space_field: #struct_name}
         });
@@ -918,7 +821,7 @@ impl ToTokens for SpacesStruct {
                 },
             )| {
                 let (field_name, space_struct) = &self.spaces.get(ptr).unwrap();
-                let space_struct_name = &space_struct.name;
+                let space_struct_name = space_struct.name();
                 let function_mut = function_mut.as_ref().map(|function_mut| {
                     quote! {
                         fn #function_mut(&mut self) -> &mut Self::#type_name {

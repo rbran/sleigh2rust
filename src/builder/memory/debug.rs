@@ -4,7 +4,8 @@ use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use sleigh_rs::{GlobalAnonReference, GlobalElement};
 
-use crate::builder::{formater::*, ToLiteral};
+use crate::builder::formater::*;
+use crate::builder::ToLiteral;
 
 use super::{
     chunks_from_varnodes, ChunkBytes, MemoryChunk, SpaceTrait, WorkType,
@@ -23,20 +24,23 @@ pub struct SpaceStructDebug {
     pub chunks: Vec<MemoryChunk>,
 }
 impl SpaceStructDebug {
-    pub fn new(
+    pub fn new<I>(
         space: &GlobalElement<sleigh_rs::Space>,
         space_trait: Rc<SpaceTrait>,
-        varnodes: impl Iterator<Item = ChunkBytes>,
-    ) -> Rc<Self> {
+        varnodes: I,
+    ) -> Self
+    where
+        I: Iterator<Item = ChunkBytes>,
+    {
         let name =
             format_ident!("Context{}StructDebug", from_sleigh(space.name()));
         let chunks = chunks_from_varnodes(varnodes);
-        Rc::new(Self {
+        Self {
             name,
             space: space.reference(),
             space_trait,
             chunks,
-        })
+        }
     }
     fn gen_read_bits_fun_impl(&self) -> TokenStream {
         let buf_len = format_ident!("buf_len");
