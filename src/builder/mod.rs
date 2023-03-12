@@ -31,9 +31,8 @@ pub use meaning::*;
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use sleigh4rust::{
-    IntTypeU, NonZeroTypeU, NumberNonZeroSigned,
-    NumberNonZeroSuperSigned, NumberNonZeroUnsigned, NumberSigned,
-    NumberSuperSigned, NumberUnsigned,
+    IntTypeU, NonZeroTypeU, NumberNonZeroSigned, NumberNonZeroSuperSigned,
+    NumberNonZeroUnsigned, NumberSigned, NumberSuperSigned, NumberUnsigned,
 };
 
 trait ToLiteral {
@@ -97,17 +96,18 @@ pub enum WorkType {
 }
 
 impl WorkType {
-    const NUMBER_UNSIGNED: Self =
+    pub const NUMBER_UNSIGNED: Self =
         Self::const_creator(NumberUnsigned::BITS, false);
-    const NUMBER_SIGNED: Self = Self::const_creator(NumberSigned::BITS, true);
-    const NUMBER_SUPER_SIGNED: Self =
+    pub const NUMBER_SIGNED: Self =
+        Self::const_creator(NumberSigned::BITS, true);
+    pub const NUMBER_SUPER_SIGNED: Self =
         Self::const_creator(NumberSuperSigned::BITS, true);
 
-    const NUMBER_NON_ZERO_UNSIGNED: Self =
+    pub const NUMBER_NON_ZERO_UNSIGNED: Self =
         Self::const_creator(NumberNonZeroUnsigned::BITS, false);
-    const NUMBER_NON_ZERO_SIGNED: Self =
+    pub const NUMBER_NON_ZERO_SIGNED: Self =
         Self::const_creator(NumberNonZeroSigned::BITS, true);
-    const NUMBER_NON_ZERO_SUPER_SIGNED: Self =
+    pub const NUMBER_NON_ZERO_SUPER_SIGNED: Self =
         Self::const_creator(NumberNonZeroSuperSigned::BITS, true);
 
     const fn const_creator(bits: u32, signed: bool) -> Self {

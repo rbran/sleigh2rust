@@ -999,7 +999,7 @@ impl MemoryChunk {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-struct ChunkBytes {
+pub struct ChunkBytes {
     offset: IntTypeU,
     len: NonZeroTypeU,
 }

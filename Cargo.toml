@@ -11,6 +11,7 @@ description = "Transpile Ghidra Sleigh parser into rust"
 
 [dependencies]
 sleigh-rs = "0.1"
+sleigh2macro = "0.1"
 sleigh4rust = "0.1"
 quote = "1"
 bitvec = "1"
