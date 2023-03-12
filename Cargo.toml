@@ -10,9 +10,8 @@ description = "Transpile Ghidra Sleigh parser into rust"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-sleigh-rs = "0.1"
-sleigh2macro = "0.1"
-sleigh4rust = "0.1"
+sleigh-rs = { path = "../sleigh-rs", version = "0.1" }
+sleigh4rust = { path = "../sleigh4rust", version = "0.1" }
 quote = "1"
 bitvec = "1"
 proc-macro2 = "1"

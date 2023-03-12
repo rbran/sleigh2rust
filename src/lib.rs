@@ -6,9 +6,6 @@ use sleigh_rs::{file_to_sleigh, SleighError};
 mod builder;
 use builder::Disassembler;
 
-pub use sleigh2macro::*;
-pub use sleigh4rust::*;
-
 pub(crate) const DISASSEMBLY_ALLOW_OVERFLOW: bool = true;
 
 pub fn parse_disassembler(

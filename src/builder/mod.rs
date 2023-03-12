@@ -147,18 +147,18 @@ impl WorkType {
         Self::new_int_bits(bits, false)
     }
     pub fn from_token_field(field: &sleigh_rs::TokenField) -> Self {
-        let bits = field.range().len_bits().get().try_into().unwrap();
+        let bits = field.range().len().get().try_into().unwrap();
         Self::new_int_bits(bits, field.meaning().is_signed())
     }
     pub fn from_varnode(varnode: &sleigh_rs::Varnode) -> Self {
         Self::unsigned_from_bytes(varnode.len_bytes())
     }
     pub fn from_bitrange(bitrange: &sleigh_rs::Bitrange) -> Self {
-        Self::new_int_bits(bitrange.range.len_bits(), false)
+        Self::new_int_bits(bitrange.range.len(), false)
     }
     pub fn from_context(context: &sleigh_rs::Context) -> Self {
         let bit_len: NonZeroTypeU =
-            context.range.len_bits().get().try_into().unwrap();
+            context.range.len().get().try_into().unwrap();
         Self::new_int_bits(bit_len, context.meaning().is_signed())
     }
     pub const fn is_signed(&self) -> bool {

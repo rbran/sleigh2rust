@@ -258,9 +258,9 @@ impl ToTokens for ContextAccess {
         let context = context.element();
         let varnode = context.varnode();
         let range = context.range();
-        let bit_len = range.n_bits;
-        let lsb_bit = range.lsb_bit;
-        let n_bits = range.n_bits.get();
+        let bit_len = range.len();
+        let lsb_bit = range.start();
+        let n_bits = range.end().get();
         let signed = context.meaning().is_signed();
 
         let (data_addr, data_lsb) = sleigh4rust::bytes_from_varnode(
@@ -603,10 +603,10 @@ fn read_write_bitrange(
     read_name: &Ident,
     write_name: Option<&Ident>,
     varnode: &GlobalElement<sleigh_rs::Varnode>,
-    range: &sleigh_rs::RangeBits,
+    range: &sleigh_rs::BitRange,
 ) -> TokenStream {
-    let bit_start = range.lsb_bit;
-    let bit_len = range.n_bits.get();
+    let bit_start = range.start();
+    let bit_len = range.len().get();
     let bit_mask = (1 << bit_len) - 1;
 
     let varnode_addr = varnode.offset();

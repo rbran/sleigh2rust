@@ -239,20 +239,20 @@ impl<'a> ToTokens for TokenParser {
         let fields = self.fields.values().map(|(name, token_field_struct)| {
             let token_field_struct_name = &token_field_struct.struct_name;
             let token_field = token_field_struct.sleigh.element();
-            let sleigh_rs::RangeBits { lsb_bit, n_bits } = token_field.range();
+            let range = token_field.range();
             let signed = token_field.meaning().is_signed();
             let big_endian = token_field.token().endian().is_big();
-            let param_type = WorkType::new_int_bits(*n_bits, signed);
-            let len_bits = n_bits.get().unsuffixed();
+            let param_type = WorkType::new_int_bits(range.len(), signed);
+            let len_bits = range.len().get().unsuffixed();
             let (data_addr, data_lsb) = sleigh4rust::bytes_from_varnode(
                 big_endian,
                 0,
                 token_field.token().len_bytes.get(),
-                *lsb_bit,
-                n_bits.get(),
+                range.start(),
+                range.len().get(),
             );
             let work_type = WorkType::new_int_bits(
-                NonZeroTypeU::new(data_lsb + n_bits.get()).unwrap(),
+                NonZeroTypeU::new(data_lsb + range.len().get()).unwrap(),
                 signed,
             );
             let read_function = work_type.sleigh4rust_read_memory();

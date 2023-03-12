@@ -49,15 +49,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "litrs"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f17c3668f3cc1132437cdadc93dab05e52d592f06948d3f64828430c36e4a70"
-dependencies = [
- "proc-macro2",
-]
-
-[[package]]
 name = "memchr"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -106,8 +97,6 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 [[package]]
 name = "sleigh-rs"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0535598c252e17cdee5b9e98a25ffc4b1707c01d8da6e579660a8383c692e43e"
 dependencies = [
  "indexmap",
  "nom",
@@ -116,36 +105,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "sleigh2macro"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "460d2b92232e00c9ee53793b5f184af32e6df65ad02d61664382ebe493e735a8"
-dependencies = [
- "litrs",
- "proc-macro2",
- "quote",
- "sleigh2rust 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
 name = "sleigh2rust"
 version = "0.1.0"
-dependencies = [
- "bitvec",
- "ethnum",
- "indexmap",
- "proc-macro2",
- "quote",
- "sleigh-rs",
- "sleigh2macro",
- "sleigh4rust",
-]
-
-[[package]]
-name = "sleigh2rust"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e6caecc3bb624158c61b6967a2acddaafdfc29a554945c974cf5f893dbecb20"
 dependencies = [
  "bitvec",
  "ethnum",
@@ -159,8 +120,6 @@ dependencies = [
 [[package]]
 name = "sleigh4rust"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ec3bfb702b453ed705eb4113d39caef5be0c21f3f15f033b08ea0f6268113da"
 dependencies = [
  "ethnum",
 ]
