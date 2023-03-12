@@ -260,7 +260,7 @@ impl ToTokens for ContextAccess {
         let range = context.range();
         let bit_len = range.len();
         let lsb_bit = range.start();
-        let n_bits = range.end().get();
+        let n_bits = range.len().get();
         let signed = context.meaning().is_signed();
 
         let (data_addr, data_lsb) = sleigh4rust::bytes_from_varnode(

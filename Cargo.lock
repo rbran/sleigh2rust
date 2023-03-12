@@ -96,7 +96,7 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "sleigh-rs"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "indexmap",
  "nom",
@@ -106,7 +106,7 @@ dependencies = [
 
 [[package]]
 name = "sleigh2rust"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bitvec",
  "ethnum",
