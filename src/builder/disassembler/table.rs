@@ -7,10 +7,10 @@ use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use sleigh_rs::GlobalAnonReference;
 
-use super::{ConstructorStruct, Disassembler};
+use super::{ConstructorStruct, DisassemblerGlobal};
 use crate::builder::formater::*;
+use crate::builder::ToLiteral;
 
-#[derive(Debug)]
 pub struct TableEnum {
     //enum declaration ident
     pub enum_name: Ident,
@@ -22,14 +22,14 @@ pub struct TableEnum {
     pub display_fun: Ident,
     //constructors are mapped from the sleigh_rs constructors by index
     pub constructors: RefCell<Vec<ConstructorStruct>>,
-    disassembler: Weak<Disassembler>,
+    disassembler: Weak<dyn DisassemblerGlobal>,
     me: Weak<Self>,
     pub sleigh: GlobalAnonReference<sleigh_rs::Table>,
 }
 impl TableEnum {
     pub fn new_empty(
         sleigh: &GlobalAnonReference<sleigh_rs::Table>,
-        disassembler: Weak<Disassembler>,
+        disassembler: Weak<dyn DisassemblerGlobal>,
     ) -> Rc<Self> {
         Rc::new_cyclic(|me| {
             //only non root tables have a disassembly function
@@ -118,14 +118,62 @@ impl ToTokens for TableEnum {
         let variants_names_3 = variants_names_1.clone();
         let variants_struct_1 = constructors.iter().map(|con| &con.struct_name);
         let variants_struct_2 = variants_struct_1.clone();
-        let display_struct_name = disassembler.display.name();
+        let display_struct_name = &disassembler.display_element().name;
         let variants_display_fun =
             constructors.iter().map(|con| &con.display_fun);
         let variants_parser_fun =
             constructors.iter().map(|con| &con.parser_fun);
-        let inst_work_type = &disassembler.inst_work_type;
-        let global_set_enum = disassembler.global_set_trait.trait_name();
-        let context_trait_name = &disassembler.memory.spaces_trait.name;
+        let variants_min_len = constructors
+            .iter()
+            .map(|con| con.sleigh.pattern.len().min().unsuffixed());
+        let context_len =
+            sleigh_rs::Sleigh::context_len(disassembler.sleigh().contexts())
+                .map(|x| x.get().try_into().unwrap())
+                .unwrap_or(0);
+        let variants_constraint = constructors.iter().map(|con| {
+            con.sleigh.pattern.variants(context_len).filter_map(
+                |(context, pattern)| {
+                    let (context_value, context_mask) =
+                        context.into_iter().enumerate().fold(
+                            (0u128, 0u128),
+                            |(acc_value, acc_mask), (i, (value, mask))| {
+                                (
+                                    acc_value | ((value as u128) << i),
+                                    acc_mask | ((mask as u128) << i),
+                                )
+                            },
+                        );
+                    let pattern_constraint = pattern
+                        .into_iter()
+                        .enumerate()
+                        .filter(|(_, (_, mask))| *mask != 0)
+                        .map(|(i, (value, mask))| {
+                            let i = i.unsuffixed();
+                            let value = value.unsuffixed();
+                            let mask = mask.unsuffixed();
+                            quote!{ (tokens_param[#i] & #mask) == #value}
+                        });
+                    let context_constraint = (context_mask != 0).then(|| {
+                        let context_value = context_value.unsuffixed();
+                        let context_mask = context_mask.unsuffixed();
+                        quote!{ context_param.0 & #context_mask == #context_value }
+                    }).into_iter();
+
+                    context_constraint
+                        .chain(pattern_constraint)
+                        .reduce(|mut acc, x| {
+                            acc.extend(quote!{&& #x});
+                            acc
+                        })
+                },
+            ).reduce(|mut acc, x| {
+                acc.extend(quote!{|| (#x)});
+                acc
+            }).map(|x| quote!{&& (#x)})
+        });
+        let addr_type = &disassembler.addr_type();
+        let context_struct = &disassembler.context_struct();
+        let globalset_struct = &disassembler.globalset_struct();
         tokens.extend(quote! {
             #(#constructors_structs)*
             #[derive(Clone, Debug)]
@@ -133,14 +181,14 @@ impl ToTokens for TableEnum {
                 #(#variants_names_1(#variants_struct_1)),*
             }
             impl #enum_name {
-                fn #display_fun<T>(
+                fn #display_fun(
                     &self,
                     display: &mut Vec<#display_struct_name>,
-                    context: &T,
-                    inst_start: #inst_work_type,
-                    inst_next: #inst_work_type,
-                    global_set_param: &mut impl #global_set_enum,
-                ) where T: #context_trait_name + Clone {
+                    context: &#context_struct,
+                    inst_start: #addr_type,
+                    inst_next: #addr_type,
+                    global_set_param: &mut #globalset_struct,
+                ) {
                     match self {
                         #(Self::#variants_names_2(x) => x.#variants_display_fun(
                               display,
@@ -151,25 +199,25 @@ impl ToTokens for TableEnum {
                           )),*
                     }
                 }
-                fn #parse_fun<T>(
+                fn #parse_fun(
                     tokens_param: &[u8],
-                    context_param: &mut T,
-                    inst_start: #inst_work_type,
-                ) -> Option<(#inst_work_type, Self)>
-                    where T: #context_trait_name + Clone
-                {
-                    //clone context, so we updated it only if we found the correct
-                    //match variant
+                    context_param: &mut #context_struct,
+                    inst_start: #addr_type,
+                ) -> Option<(#addr_type, Self)> {
+                    //clone context, so we updated it only if we found the
+                    //correct match variant
                     let mut context_current = context_param.clone();
                     //try to parse each of the constructors, return if success
-                    #(if let Some((inst_len, parsed)) =
-                      #variants_struct_2::#variants_parser_fun(
-                        tokens_param,
-                        &mut context_current,
-                        inst_start,
-                    ) {
-                        *context_param = context_current;
-                        return Some((inst_len, Self::#variants_names_3(parsed)));
+                    #(if tokens_param.len() >= #variants_min_len #variants_constraint {
+                        if let Some((inst_len, parsed)) =
+                          #variants_struct_2::#variants_parser_fun(
+                            tokens_param,
+                            &mut context_current,
+                            inst_start,
+                        ) {
+                            *context_param = context_current;
+                            return Some((inst_len, Self::#variants_names_3(parsed)));
+                        }
                     })*
                     None
                 }

@@ -8,11 +8,13 @@ use sleigh_rs::disassembly::{Assertation, GlobalSet, Variable};
 use sleigh_rs::{GlobalAnonReference, GlobalElement, GlobalReference};
 
 use crate::builder::formater::from_sleigh;
-use crate::builder::{Disassembler, DisassemblyGenerator, ToLiteral, WorkType};
+use crate::builder::{
+    DisassemblerGlobal, DisassemblyGenerator, ToLiteral, WorkType,
+};
 
 use super::{ConstructorStruct, ParsedField};
 
-pub const DISASSEMBLY_WORK_TYPE: WorkType = WorkType::NUMBER_SUPER_SIGNED;
+pub const DISASSEMBLY_WORK_TYPE: WorkType = WorkType::DISASSEMBLY_TYPE;
 pub struct DisassemblyDisplay<'a> {
     pub constructor: &'a ConstructorStruct,
     pub display_param: &'a Ident,
@@ -42,17 +44,16 @@ impl<'a> DisassemblyDisplay<'a> {
         let field =
             self.constructor.ass_fields.get(&ass.element_ptr()).unwrap();
         let name = &field.name;
-        let disassembly_fun = &field.token_field_struct.disassembly_fun;
-        quote! {self.#name.#disassembly_fun()}
+        quote! {#DISASSEMBLY_WORK_TYPE::try_from(self.#name).unwrap()}
     }
-    //get var name on that contains the this context value
+
     fn context_field(&self, context: &sleigh_rs::Context) -> TokenStream {
-        //otherwise create it
         let disassembler = self.constructor.disassembler.upgrade().unwrap();
-        disassembler
-            .memory
-            .spaces_trait
-            .build_context_disassembly_read_call(&self.context_param, &context)
+        let read_call = disassembler
+            .context()
+            .unwrap()
+            .read_call(context, &self.context_param);
+        quote! { #DISASSEMBLY_WORK_TYPE::try_from(#read_call).unwrap()}
     }
     //get var name on that contains the this assembly field value
     fn table_field(
@@ -65,14 +66,12 @@ impl<'a> DisassemblyDisplay<'a> {
             .get(&table.element_ptr())
             .unwrap();
         let field_name = &field.name;
-        let disassembler = self.constructor.disassembler.upgrade().unwrap();
-        let addr_type = &disassembler.inst_work_type;
         use sleigh_rs::table::ExecutionExport;
         match table.export {
-            ExecutionExport::Const(len) => {
+            ExecutionExport::Const(_len) => {
                 //TODO allow table to export value with addr diff from addr_len
                 //and auto convert using try_from?
-                assert_eq!(len, addr_type.len_bytes())
+                //assert_eq!(len, addr_type.len_bytes())
             }
             ExecutionExport::None
             | ExecutionExport::Value(_)
@@ -107,12 +106,9 @@ impl<'a> ToTokens for DisassemblyDisplay<'a> {
 
 impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
     fn global_set(&self, global_set: &'b GlobalSet) -> TokenStream {
-        let sleigh_context = global_set.context().element();
         let disassembler = self.constructor.disassembler.upgrade().unwrap();
-        let context = disassembler
-            .global_set_trait
-            .context(sleigh_context.element());
-        let addr_type = &disassembler.inst_work_type;
+        let sleigh_context = global_set.context().element();
+        let addr_type = &disassembler.addr_type();
         use sleigh_rs::disassembly::AddrScope::*;
         let address = match &global_set.address {
             Integer(value) => {
@@ -141,11 +137,15 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
                 quote! { Some(#name) }
             }
         };
-        let set_function = context.function();
         let global_set_param = self.global_set_param;
+        let context = disassembler.context().unwrap();
+        let set_fun = &context.globalset.set_fun;
+        let context_param = format_ident!("context");
         let value = self.context_field(&sleigh_context);
+        let write_call =
+            context.write_call(&sleigh_context, &context_param, &value);
         quote! {
-            #global_set_param.#set_function(#address, #value);
+            #global_set_param.#set_fun(#address, |#context_param| #write_call);
         }
     }
 
@@ -206,9 +206,9 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
 }
 
 pub struct DisassemblyPattern<'a> {
-    pub disassembler: &'a Disassembler,
-    pub token_parser: Option<&'a Ident>,
+    pub disassembler: &'a dyn DisassemblerGlobal,
     pub context_instance: &'a Ident,
+    pub tokens: &'a Ident,
     pub inst_start: &'a Ident,
     pub root_tables: &'a IndexMap<*const sleigh_rs::Table, Ident>,
     pub root_token_fields: &'a IndexMap<*const sleigh_rs::TokenField, Ident>,
@@ -225,21 +225,19 @@ impl<'a> DisassemblyPattern<'a> {
         &self,
         ass: &GlobalReference<sleigh_rs::TokenField>,
     ) -> TokenStream {
-        self.disassembler.token_parser.gen_disassembly_read_call(
-            self.token_parser.as_ref().unwrap(),
-            ass.element_ptr(),
-        )
+        let token_field =
+            self.disassembler.token_field(ass.element_ptr()).unwrap();
+        let value = token_field.inline_value(self.tokens);
+        quote! { #DISASSEMBLY_WORK_TYPE::try_from(#value).unwrap() }
     }
     //get var name on that contains the this context value
     fn context_field(&self, context: &sleigh_rs::Context) -> TokenStream {
-        //otherwise create it
-        self.disassembler
-            .memory
-            .spaces_trait
-            .build_context_disassembly_read_call(
-                &self.context_instance,
-                &context,
-            )
+        let read_call = self
+            .disassembler
+            .context()
+            .unwrap()
+            .read_call(context, &self.context_instance);
+        quote! { #DISASSEMBLY_WORK_TYPE::try_from(#read_call).unwrap()}
     }
     fn can_execute(&self, expr: &sleigh_rs::disassembly::Expr) -> bool {
         use sleigh_rs::disassembly::ExprElement::*;
@@ -306,20 +304,12 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyPattern<'a> {
         context: &GlobalAnonReference<sleigh_rs::Context>,
         value: TokenStream,
     ) -> TokenStream {
-        let tmp_value = format_ident!("tmp");
-        let write = self
-            .disassembler
-            .memory
-            .spaces_trait
-            .build_context_disassembly_write_call(
-                &self.context_instance,
-                &context.element(),
-                &tmp_value,
-            );
-        quote! {
-            let #tmp_value = #value;
-            #write;
-        }
+        let write = self.disassembler.context().unwrap().write_call(
+            &context.element(),
+            &self.context_instance,
+            &value,
+        );
+        quote! { #write; }
     }
 
     fn new_variable(&mut self, var: &'b Rc<Variable>) -> TokenStream {

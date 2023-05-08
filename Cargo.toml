@@ -11,7 +11,6 @@ description = "Transpile Ghidra Sleigh parser into rust"
 
 [dependencies]
 sleigh-rs = { path = "../sleigh-rs", version = "0.1" }
-sleigh4rust = { path = "../sleigh4rust", version = "0.1" }
 quote = "1"
 bitvec = "1"
 proc-macro2 = "1"

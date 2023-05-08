@@ -7,9 +7,11 @@ use quote::{format_ident, quote, ToTokens};
 use sleigh_rs::disassembly::GlobalSet;
 
 use crate::builder::formater::from_sleigh;
-use crate::builder::{DisassemblyGenerator, TokenFieldStruct};
+use crate::builder::{
+    token_field_display, token_field_final_type, DisassemblyGenerator, WorkType,
+};
 
-use super::{Disassembler, TableEnum};
+use super::{DisassemblerGlobal, TableEnum};
 
 mod disassembly;
 pub use disassembly::*;
@@ -41,7 +43,7 @@ impl<T> std::ops::Deref for ParsedField<T> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TableField {
     pub name: Ident,
     pub table: Rc<TableEnum>,
@@ -73,26 +75,21 @@ impl ToTokens for TableField {
 #[derive(Clone, Debug)]
 pub struct TokenFieldField {
     pub name: Ident,
-    pub token_field_struct: Rc<TokenFieldStruct>,
+    pub data_type: WorkType,
 }
 
 impl ToTokens for TokenFieldField {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let Self {
-            name,
-            token_field_struct: token_field,
-        } = self;
-        let token_field_name = &token_field.struct_name;
+        let Self { name, data_type } = self;
         tokens.extend(quote! {
-            #name: #token_field_name
+            #name: #data_type
         })
     }
 }
 
-#[derive(Debug)]
 pub struct ConstructorStruct {
     pub sleigh: Rc<sleigh_rs::Constructor>,
-    disassembler: Weak<Disassembler>,
+    disassembler: Weak<dyn DisassemblerGlobal>,
     //struct name
     pub struct_name: Ident,
     //variant name in the enum
@@ -114,7 +111,7 @@ impl ConstructorStruct {
     pub fn new(
         sleigh: Rc<sleigh_rs::Constructor>,
         tables: &IndexMap<*const sleigh_rs::Table, Rc<TableEnum>>,
-        disassembler: Weak<Disassembler>,
+        disassembler: Weak<dyn DisassemblerGlobal>,
         table_name: &str,
         number: usize,
     ) -> Self {
@@ -209,17 +206,13 @@ impl ConstructorStruct {
             }
         }
         //verify that the pattern produces those fields
-        let disassembler_up = disassembler.upgrade().unwrap();
         let ass_fields = ass_fields
             .into_iter()
             .map(|(k, v)| {
                 let name = format_ident!("{}", from_sleigh(v.name()));
-                let token_field_struct = disassembler_up
-                    .token_parser
-                    .token_field_struct(v.element_ptr());
                 let field = TokenFieldField {
                     name,
-                    token_field_struct: Rc::clone(token_field_struct),
+                    data_type: token_field_final_type(&v.element()),
                 };
                 (k, field)
             })
@@ -271,15 +264,8 @@ impl ConstructorStruct {
         let inst_start = format_ident!("inst_start");
         let inst_next = format_ident!("inst_next");
         let global_set_param = format_ident!("global_set");
-        let display_struct = disassembler.display.name();
-        let context_trait = &disassembler.memory.spaces_trait.name;
-        let display = &disassembler.display;
-        let display_element = display.name();
-        let var_literal = display.var_named();
-        let var_register = display.var_register();
-        let var_number = display.var_number();
-        let register_enum = disassembler.registers.name();
-        let inst_work_type = &disassembler.inst_work_type;
+        let display_struct = &disassembler.display_element().name;
+        let register_enum = disassembler.register().name();
 
         use sleigh_rs::display::DisplayScopeElements as DisplayScope;
         let mut disassembly = DisassemblyDisplay {
@@ -313,23 +299,19 @@ impl ConstructorStruct {
                     let display = ele.iter().map(|ele| match ele {
                         DisplayScope::Varnode(varnode) => {
                             let reg_var = disassembler
-                                .registers
+                                .register()
                                 .register(varnode.element_ptr())
                                 .unwrap();
                             quote! {
-                                #display_element::#var_register(
+                                <#display_struct>::Register(
                                     #register_enum::#reg_var
                                 )
                             }
                         }
-                        //TODO solve context with and without meaning
                         DisplayScope::Context(context) => disassembler
-                            .memory
-                            .spaces_trait
-                            .build_context_display_call(
-                                &context_param,
-                                &context.element(),
-                            ),
+                            .context()
+                            .unwrap()
+                            .display_call(&context.element(), &context_param),
                         DisplayScope::TokenField(ass) => {
                             let ass = ass.element();
                             let var = self
@@ -337,24 +319,26 @@ impl ConstructorStruct {
                                 .get(&ass.element_ptr())
                                 .unwrap();
                             let var_name = &var.name;
-                            let display_call =
-                                &var.token_field_struct.display_fun;
-                            quote! { self.#var_name.#display_call() }
+                            token_field_display(
+                                quote! {self.#var_name},
+                                &ass,
+                                disassembler.meanings(),
+                            )
                         }
                         DisplayScope::Disassembly(var) => {
                             let ptr = Rc::as_ptr(var);
                             let vars = disassembly.vars.borrow();
                             let var = &vars.get(&ptr).unwrap().name;
-                            quote! {#display_element::#var_number(true, #var)}
+                            quote! {<#display_struct>::Number(true, #var)}
                         }
                         DisplayScope::Space => {
-                            quote! {#display_element::#var_literal(" ")}
+                            quote! {<#display_struct>::Literal(" ")}
                         }
                         DisplayScope::Literal(literal) => {
-                            quote! {#display_element::#var_literal(#literal)}
+                            quote! {<#display_struct>::Literal(#literal)}
                         }
                         DisplayScope::Mneumonic(literal) => {
-                            quote! {#display_element::#var_literal(#literal)}
+                            quote! {<#display_struct>::Literal(#literal)}
                         }
                         DisplayScope::Table(_) => unreachable!(),
                         DisplayScope::InstStart(_) => {
@@ -366,7 +350,7 @@ impl ConstructorStruct {
                     });
                     let display_out_len = ele.len();
                     quote! {
-                        let extend: [#display_element; #display_out_len] = [
+                        let extend: [#display_struct; #display_out_len] = [
                             #(#display),*
                         ];
                         #display_param.extend_from_slice(&extend);
@@ -379,8 +363,7 @@ impl ConstructorStruct {
                         .unwrap();
                     let field_name = &field.name;
                     let table = disassembler
-                        .tables
-                        .get(&field.table.sleigh.element_ptr())
+                        .table(field.table.sleigh.element_ptr())
                         .unwrap();
                     let display_fun = &table.display_fun;
                     if field.always {
@@ -412,15 +395,18 @@ impl ConstructorStruct {
                     #build_table
                 }
             });
+        let context_struct = disassembler.context_struct();
+        let globalset_struct = &disassembler.globalset_struct();
+        let addr_type = disassembler.addr_type();
         quote! {
-            fn #display_fun<T>(
+            fn #display_fun(
                 &self,
                 #display_param: &mut Vec<#display_struct>,
-                #context_param: &T,
-                #inst_start: #inst_work_type,
-                #inst_next: #inst_work_type,
-                #global_set_param: &mut impl GlobalSetTrait,
-            ) where T: #context_trait + Clone {
+                #context_param: &#context_struct,
+                #inst_start: #addr_type,
+                #inst_next: #addr_type,
+                #global_set_param: &mut #globalset_struct,
+            ) {
                 #disassembly_body
                 #(#displays)*
             }

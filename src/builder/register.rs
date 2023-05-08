@@ -10,8 +10,8 @@ use super::formater::*;
 
 #[derive(Clone, Debug)]
 pub struct RegistersEnum {
-    name: Ident,
-    registers: Box<[(Ident, GlobalElement<sleigh_rs::Varnode>)]>,
+    pub name: Ident,
+    pub registers: Box<[(Ident, GlobalElement<sleigh_rs::Varnode>)]>,
 }
 
 impl RegistersEnum {
@@ -106,11 +106,16 @@ impl ToTokens for RegistersEnum {
             pub enum #name {
                 #(#elements_names),*
             }
+            impl #name {
+                fn as_str(&self) -> &'static str {
+                    match self {
+                        #(Self::#elements_names2 => #elements_display,)*
+                    }
+                }
+            }
             impl core::fmt::Display for #name {
                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> std::fmt::Result {
-                    match self {
-                        #(Self::#elements_names2 => write!(f, #elements_display),)*
-                    }
+                    write!(f, "{}", self.as_str())
                 }
             }
         })

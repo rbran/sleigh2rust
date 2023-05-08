@@ -1,14 +1,14 @@
 use std::rc::Rc;
 
 use proc_macro2::TokenStream;
+
 use quote::{quote, ToTokens};
 
 use sleigh_rs::disassembly::{
     Assertation, Assignment, Expr, ExprElement, GlobalSet, Op, OpUnary,
     ReadScope, Variable,
 };
-use sleigh_rs::Context;
-use sleigh_rs::GlobalAnonReference;
+use sleigh_rs::{Context, GlobalAnonReference};
 
 fn disassembly_op(x: impl ToTokens, op: &Op, y: impl ToTokens) -> TokenStream {
     match (crate::DISASSEMBLY_ALLOW_OVERFLOW, op) {
@@ -17,10 +17,10 @@ fn disassembly_op(x: impl ToTokens, op: &Op, y: impl ToTokens) -> TokenStream {
         (true, Op::Mul) => quote! {#x.wrapping_mul(#y)},
         (true, Op::Div) => quote! {#x.wrapping_div(#y)},
         (true, Op::Asr) => quote! {
-            u32::try_from(#y).ok().map(|shr| #x.checked_shr(shr)).flatten().unwrap_or(0)
+            u32::try_from(#y).ok().and_then(|shr| #x.checked_shr(shr)).unwrap_or(0)
         },
         (true, Op::Lsl) => quote! {
-            u32::try_from(#y).ok().map(|shl| #x.checked_shl(shl)).flatten().unwrap_or(0)
+            u32::try_from(#y).ok().and_then(|shl| #x.checked_shl(shl)).unwrap_or(0)
         },
         (false, Op::Add) => quote! {(#x + #y)},
         (false, Op::Sub) => quote! {(#x - #y)},
