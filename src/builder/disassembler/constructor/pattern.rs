@@ -137,7 +137,6 @@ pub fn root_pattern_function(
 
 fn sub_pattern_closure(
     constructor: &ConstructorStruct,
-    part_of_flat: bool,
     pattern: &sleigh_rs::Pattern,
     inst_start: &Ident,
     disassembly_vars: &mut IndexMap<
@@ -154,22 +153,15 @@ fn sub_pattern_closure(
     let mut produced_tables = IndexMap::new();
     let mut produced_token_fields = IndexMap::new();
 
-    let mut this_part_of_flat = part_of_flat;
     let blocks_parse: TokenStream = pattern
         .blocks()
         .iter()
-        // mark blocks that are part of the calculated flat pattern
-        .map(move |block| {
-            let this_is_flat = this_part_of_flat;
-            this_part_of_flat &= block.len().single_len().is_some();
-            (block, this_is_flat)
-        })
         .enumerate()
-        .map(|(index, (block, this_part_of_flat))| {
+        .map(|(index, block)| {
             body_block(
                 constructor,
                 index,
-                this_part_of_flat,
+                false,
                 block,
                 &pattern_len,
                 &inst_start,
@@ -275,7 +267,6 @@ fn body_block(
             let block_closure = block_or_closure(
                 constructor,
                 len,
-                part_of_flat,
                 token_fields,
                 tables,
                 branches,
@@ -378,7 +369,6 @@ fn body_block_and(
     let code_pos = body_block_and_pos(
         constructor,
         len,
-        part_of_flat,
         token_len,
         sleigh_token_fields,
         sleigh_tables,
@@ -503,7 +493,6 @@ fn body_block_and_pre(
 fn body_block_and_pos(
     constructor: &ConstructorStruct,
     _len: &sleigh_rs::PatternLen,
-    part_of_flat: bool,
     _token_len: IntTypeU,
     sleigh_token_fields: &[ProducedTokenField],
     _sleigh_tables: &[ProducedTable],
@@ -573,7 +562,6 @@ fn body_block_and_pos(
                 //TODO check recursive/always for table
                 let sub_func = sub_pattern_closure(
                     constructor,
-                    part_of_flat,
                     pattern,
                     inst_start,
                     vars,
@@ -662,7 +650,6 @@ fn body_block_and_pos(
 fn block_or_closure(
     constructor: &ConstructorStruct,
     _len: &sleigh_rs::PatternLen,
-    part_of_flat: bool,
     sleigh_token_fields: &[ProducedTokenField],
     sleigh_tables: &[ProducedTable],
     branches: &[Verification],
@@ -768,7 +755,6 @@ fn block_or_closure(
             Verification::SubPattern { location, pattern } => {
                 let sub_func = sub_pattern_closure(
                     constructor,
-                    part_of_flat,
                     pattern,
                     inst_start,
                     vars,
