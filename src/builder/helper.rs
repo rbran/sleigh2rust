@@ -6,10 +6,10 @@ use sleigh_rs::{BitRange, Endian};
 
 use super::{ToLiteral, WorkType};
 
-pub fn mask_and_rotation_from_range(range: &BitRange) -> (u128, u128) {
+pub fn rotation_and_mask_from_range(range: &BitRange) -> (u128, u128) {
     let bit_lsb = u32::try_from(range.start()).unwrap();
     let field_len = u32::try_from(range.len().get()).unwrap();
-    let mask = (u128::MAX >> (u128::BITS - field_len)) << bit_lsb;
+    let mask = u128::MAX >> (u128::BITS - field_len);
     (bit_lsb.into(), mask)
 }
 
@@ -39,24 +39,27 @@ pub fn bitrange_from_value(
     range: &BitRange,
     signed: bool,
 ) -> TokenStream {
-    let (rotation, mask) = mask_and_rotation_from_range(range);
+    let (rotation, mask) = rotation_and_mask_from_range(range);
     let mask = mask.unsuffixed();
     let rotation = rotation.unsuffixed();
-    let len_bits: u32 = range.len().get().try_into().unwrap();
-    let tmp_type = WorkType::unsigned_from_bits(len_bits);
+    let tmp_type =
+        WorkType::unsigned_from_bits(range.len().get().try_into().unwrap());
     if signed {
-        let signed_bit = (1u128 << range.len().get()).unsuffixed();
+        let signed_bit_mask = 1u128 << (range.len().get() - 1);
+        let value_mask = signed_bit_mask - 1;
+        let signed_bit_mask = signed_bit_mask.unsuffixed();
+        let value_mask = value_mask.unsuffixed();
         quote! {
-            let tmp_value = ((#raw_value & #mask) >> #rotation) as #tmp_type;
-            let #final_value = if tmp_value & #signed_bit != 0 {
-                -((tmp_value & !#signed_bit) as #final_type)
+            let tmp_value = ((#raw_value >> #rotation) & #mask) as #tmp_type;
+            let #final_value = if tmp_value & #signed_bit_mask != 0 {
+                (-((!tmp_value & #value_mask) as #final_type)) - 1
             } else {
                 tmp_value as #final_type
             };
         }
     } else {
         quote! {
-            let #final_value = ((#raw_value & #mask) >> #rotation) as #final_type;
+            let #final_value = ((#raw_value >> #rotation) & #mask) as #final_type;
         }
     }
 }

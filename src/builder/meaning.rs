@@ -6,13 +6,13 @@ use quote::{format_ident, quote, ToTokens};
 use sleigh_rs::Number;
 use sleigh_rs::{GlobalReference, PrintBase, PrintFmt};
 
-use super::{DisassemblerGlobal, WorkType, DISPLAY_WORK_TYPE};
+use super::{Disassembler, WorkType, DISPLAY_WORK_TYPE};
 use crate::{NonZeroTypeU, NumberSuperSigned};
 
 type VarMeaningSleigh = [(usize, GlobalReference<sleigh_rs::Varnode>)];
 #[derive(Debug, Clone)]
 pub struct VarMeaning {
-    disassembler: Weak<dyn DisassemblerGlobal>,
+    disassembler: Weak<Disassembler>,
     sleigh: Rc<VarMeaningSleigh>,
     pub display_func: Ident,
     pub value_func: Ident,
@@ -21,7 +21,7 @@ pub struct VarMeaning {
 }
 impl VarMeaning {
     pub fn new(
-        disassembler: Weak<dyn DisassemblerGlobal>,
+        disassembler: Weak<Disassembler>,
         sleigh: Rc<VarMeaningSleigh>,
         fun_count: usize,
     ) -> Self {
@@ -90,14 +90,14 @@ impl ToTokens for VarMeaning {
 type NameMeaningSleigh = [(usize, String)];
 #[derive(Debug, Clone)]
 pub struct NameMeaning {
-    disassembler: Weak<dyn DisassemblerGlobal>,
+    disassembler: Weak<Disassembler>,
     sleigh: Rc<NameMeaningSleigh>,
     pub display_func: Ident,
     pub index_type: WorkType,
 }
 impl NameMeaning {
     pub fn new(
-        disassembler: Weak<dyn DisassemblerGlobal>,
+        disassembler: Weak<Disassembler>,
         sleigh: Rc<NameMeaningSleigh>,
         fun_count: usize,
     ) -> Self {
@@ -142,7 +142,7 @@ impl ToTokens for NameMeaning {
 type ValueMeaningSleigh = [(usize, Number)];
 #[derive(Debug, Clone)]
 pub struct ValueMeaning {
-    disassembler: Weak<dyn DisassemblerGlobal>,
+    disassembler: Weak<Disassembler>,
     sleigh: Rc<ValueMeaningSleigh>,
     pub display_func: Ident,
     pub value_func: Ident,
@@ -151,7 +151,7 @@ pub struct ValueMeaning {
 }
 impl ValueMeaning {
     pub fn new(
-        disassembler: Weak<dyn DisassemblerGlobal>,
+        disassembler: Weak<Disassembler>,
         sleigh: Rc<ValueMeaningSleigh>,
         fun_count: usize,
     ) -> Self {
@@ -271,7 +271,7 @@ impl Meaning {
 
 #[derive(Debug, Clone)]
 pub struct Meanings {
-    disassembler: Weak<dyn DisassemblerGlobal>,
+    disassembler: Weak<Disassembler>,
     pub literal_display: Ident,
     pub vars: IndexMap<*const VarMeaningSleigh, Rc<VarMeaning>>,
     pub names: IndexMap<*const NameMeaningSleigh, Rc<NameMeaning>>,
@@ -280,7 +280,7 @@ pub struct Meanings {
 
 impl Meanings {
     pub fn new<'a>(
-        disassembler: Weak<dyn DisassemblerGlobal>,
+        disassembler: Weak<Disassembler>,
         meanings: impl Iterator<Item = &'a sleigh_rs::Meaning>,
     ) -> Self {
         let mut vars = IndexMap::new();

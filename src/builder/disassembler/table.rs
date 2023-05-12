@@ -7,7 +7,7 @@ use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use sleigh_rs::GlobalAnonReference;
 
-use super::{ConstructorStruct, DisassemblerGlobal};
+use super::{ConstructorStruct, Disassembler};
 use crate::builder::formater::*;
 use crate::builder::ToLiteral;
 
@@ -22,14 +22,14 @@ pub struct TableEnum {
     pub display_fun: Ident,
     //constructors are mapped from the sleigh_rs constructors by index
     pub constructors: RefCell<Vec<ConstructorStruct>>,
-    disassembler: Weak<dyn DisassemblerGlobal>,
+    disassembler: Weak<Disassembler>,
     me: Weak<Self>,
     pub sleigh: GlobalAnonReference<sleigh_rs::Table>,
 }
 impl TableEnum {
     pub fn new_empty(
         sleigh: &GlobalAnonReference<sleigh_rs::Table>,
-        disassembler: Weak<dyn DisassemblerGlobal>,
+        disassembler: Weak<Disassembler>,
     ) -> Rc<Self> {
         Rc::new_cyclic(|me| {
             //only non root tables have a disassembly function
@@ -130,27 +130,30 @@ impl ToTokens for TableEnum {
             sleigh_rs::Sleigh::context_len(disassembler.sleigh().contexts())
                 .map(|x| x.get().try_into().unwrap())
                 .unwrap_or(0);
+
+        //only verify variants if not in debug mode
         let variants_constraint = constructors.iter().map(|con| {
-            con.sleigh.pattern.variants(context_len).filter_map(
-                |(context, pattern)| {
+                (!disassembler.debug).then(|| {
+                    let (context, pattern) = disassembler.sleigh().pattern_bytes(&con.sleigh).unwrap();
                     let (context_value, context_mask) =
                         context.into_iter().enumerate().fold(
                             (0u128, 0u128),
-                            |(acc_value, acc_mask), (i, (value, mask))| {
+                            |(acc_value, acc_mask), (byte_num, byte)| {
                                 (
-                                    acc_value | ((value as u128) << i),
-                                    acc_mask | ((mask as u128) << i),
+                                    acc_value | ((byte.defined_value() as u128) << (byte_num * 8)),
+                                    acc_mask | ((byte.defined_bits() as u128) << (byte_num * 8)),
                                 )
                             },
                         );
+                    //only constraint if mask != 0
                     let pattern_constraint = pattern
                         .into_iter()
                         .enumerate()
-                        .filter(|(_, (_, mask))| *mask != 0)
-                        .map(|(i, (value, mask))| {
+                        .filter(|(_, byte)| byte.defined_bits() != 0)
+                        .map(|(i, byte)| {
                             let i = i.unsuffixed();
-                            let value = value.unsuffixed();
-                            let mask = mask.unsuffixed();
+                            let value = byte.defined_value().unsuffixed();
+                            let mask = byte.defined_bits().unsuffixed();
                             quote!{ (tokens_param[#i] & #mask) == #value}
                         });
                     let context_constraint = (context_mask != 0).then(|| {
@@ -161,19 +164,16 @@ impl ToTokens for TableEnum {
 
                     context_constraint
                         .chain(pattern_constraint)
-                        .reduce(|mut acc, x| {
+                        .fold(quote!{}, |mut acc, x| {
                             acc.extend(quote!{&& #x});
                             acc
                         })
                 },
-            ).reduce(|mut acc, x| {
-                acc.extend(quote!{|| (#x)});
-                acc
-            }).map(|x| quote!{&& (#x)})
+            )
         });
         let addr_type = &disassembler.addr_type();
-        let context_struct = &disassembler.context_struct();
-        let globalset_struct = &disassembler.globalset_struct();
+        let context_struct = &disassembler.context().name;
+        let globalset_struct = &disassembler.context().globalset.name;
         tokens.extend(quote! {
             #(#constructors_structs)*
             #[derive(Clone, Debug)]

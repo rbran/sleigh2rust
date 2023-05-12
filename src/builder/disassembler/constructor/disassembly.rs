@@ -8,9 +8,7 @@ use sleigh_rs::disassembly::{Assertation, GlobalSet, Variable};
 use sleigh_rs::{GlobalAnonReference, GlobalElement, GlobalReference};
 
 use crate::builder::formater::from_sleigh;
-use crate::builder::{
-    DisassemblerGlobal, DisassemblyGenerator, ToLiteral, WorkType,
-};
+use crate::builder::{Disassembler, DisassemblyGenerator, ToLiteral, WorkType};
 
 use super::{ConstructorStruct, ParsedField};
 
@@ -51,7 +49,6 @@ impl<'a> DisassemblyDisplay<'a> {
         let disassembler = self.constructor.disassembler.upgrade().unwrap();
         let read_call = disassembler
             .context()
-            .unwrap()
             .read_call(context, &self.context_param);
         quote! { #DISASSEMBLY_WORK_TYPE::try_from(#read_call).unwrap()}
     }
@@ -90,7 +87,7 @@ impl<'a> ToTokens for DisassemblyDisplay<'a> {
             .pattern
             .blocks()
             .iter()
-            .map(|block| match block {
+            .flat_map(|block| match block {
                 sleigh_rs::Block::And { pre, pos, .. } => {
                     pre.iter().chain(pos.iter())
                 }
@@ -98,7 +95,6 @@ impl<'a> ToTokens for DisassemblyDisplay<'a> {
                     pos.iter().chain([/*LOL*/].iter())
                 }
             })
-            .flatten()
             .chain(self.constructor.sleigh.pattern.disassembly_pos_match());
         tokens.extend(self.disassembly(&mut asses));
     }
@@ -138,7 +134,7 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
             }
         };
         let global_set_param = self.global_set_param;
-        let context = disassembler.context().unwrap();
+        let context = disassembler.context();
         let set_fun = &context.globalset.set_fun;
         let context_param = format_ident!("context");
         let value = self.context_field(&sleigh_context);
@@ -206,7 +202,7 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyDisplay<'a> {
 }
 
 pub struct DisassemblyPattern<'a> {
-    pub disassembler: &'a dyn DisassemblerGlobal,
+    pub disassembler: &'a Disassembler,
     pub context_instance: &'a Ident,
     pub tokens: &'a Ident,
     pub inst_start: &'a Ident,
@@ -235,7 +231,6 @@ impl<'a> DisassemblyPattern<'a> {
         let read_call = self
             .disassembler
             .context()
-            .unwrap()
             .read_call(context, &self.context_instance);
         quote! { #DISASSEMBLY_WORK_TYPE::try_from(#read_call).unwrap()}
     }
@@ -304,7 +299,7 @@ impl<'a, 'b> DisassemblyGenerator<'b> for DisassemblyPattern<'a> {
         context: &GlobalAnonReference<sleigh_rs::Context>,
         value: TokenStream,
     ) -> TokenStream {
-        let write = self.disassembler.context().unwrap().write_call(
+        let write = self.disassembler.context().write_call(
             &context.element(),
             &self.context_instance,
             &value,

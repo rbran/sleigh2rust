@@ -11,7 +11,7 @@ use sleigh_rs::GlobalAnonReference;
 
 use crate::builder::formater::from_sleigh;
 use crate::builder::{
-    DisassemblerGlobal, DisassemblyGenerator, ToLiteral, DISASSEMBLY_WORK_TYPE,
+    Disassembler, DisassemblyGenerator, ToLiteral, DISASSEMBLY_WORK_TYPE,
 };
 use crate::IntTypeU;
 
@@ -22,7 +22,7 @@ pub fn root_pattern_function(
     constructor: &ConstructorStruct,
 ) -> TokenStream {
     let disassembler = constructor.disassembler.upgrade().unwrap();
-    let context_memory = &disassembler.context_struct();
+    let context_memory = &disassembler.context().name;
     let addr_type = &disassembler.addr_type();
     let inst_start = format_ident!("inst_start");
     let pattern_len = format_ident!("pattern_len");
@@ -50,16 +50,25 @@ pub fn root_pattern_function(
         .map(|var| disassembly.new_variable(var))
         .collect();
 
+    // dissable flat pattern if in debug mode
+    let mut part_of_flat = !disassembler.debug;
     let blocks_parse: TokenStream = constructor
         .sleigh
         .pattern
         .blocks()
         .iter()
+        // mark blocks that are part of the calculated flat pattern
+        .map(move |block| {
+            let this_is_flat = part_of_flat;
+            part_of_flat &= block.len().single_len().is_some();
+            (block, this_is_flat)
+        })
         .enumerate()
-        .map(|(index, block)| {
+        .map(|(index, (block, part_of_flat))| {
             body_block(
                 constructor,
                 index,
+                part_of_flat,
                 block,
                 &pattern_len,
                 &inst_start,
@@ -128,6 +137,7 @@ pub fn root_pattern_function(
 
 fn sub_pattern_closure(
     constructor: &ConstructorStruct,
+    part_of_flat: bool,
     pattern: &sleigh_rs::Pattern,
     inst_start: &Ident,
     disassembly_vars: &mut IndexMap<
@@ -143,14 +153,23 @@ fn sub_pattern_closure(
     let context_instance = format_ident!("context_instance");
     let mut produced_tables = IndexMap::new();
     let mut produced_token_fields = IndexMap::new();
+
+    let mut this_part_of_flat = part_of_flat;
     let blocks_parse: TokenStream = pattern
         .blocks()
         .iter()
+        // mark blocks that are part of the calculated flat pattern
+        .map(move |block| {
+            let this_is_flat = this_part_of_flat;
+            this_part_of_flat &= block.len().single_len().is_some();
+            (block, this_is_flat)
+        })
         .enumerate()
-        .map(|(index, block)| {
+        .map(|(index, (block, this_part_of_flat))| {
             body_block(
                 constructor,
                 index,
+                this_part_of_flat,
                 block,
                 &pattern_len,
                 &inst_start,
@@ -174,7 +193,7 @@ fn sub_pattern_closure(
             .get(&token_field.token_field().element_ptr())
             .expect("LOGIC_EROR: TokenField not produced")
     });
-    let context_struct = disassembler.context_struct();
+    let context_struct = &disassembler.context().name;
     quote! {
         |tokens: &[u8], context_param: &mut #context_struct| {
             //each block will increment this value by its size
@@ -197,6 +216,7 @@ fn sub_pattern_closure(
 fn body_block(
     constructor: &ConstructorStruct,
     block_index: usize,
+    part_of_flat: bool,
     block: &sleigh_rs::Block,
     pattern_len: &Ident,
     inst_start: &Ident,
@@ -225,6 +245,7 @@ fn body_block(
         } => body_block_and(
             constructor,
             block_index,
+            part_of_flat,
             len,
             *token_len,
             token_fields,
@@ -254,6 +275,7 @@ fn body_block(
             let block_closure = block_or_closure(
                 constructor,
                 len,
+                part_of_flat,
                 token_fields,
                 tables,
                 branches,
@@ -313,6 +335,7 @@ fn body_block(
 fn body_block_and(
     constructor: &ConstructorStruct,
     block_index: usize,
+    part_of_flat: bool,
     len: &sleigh_rs::PatternLen,
     token_len: IntTypeU,
     sleigh_token_fields: &[ProducedTokenField],
@@ -338,6 +361,7 @@ fn body_block_and(
     let code_pre = body_block_and_pre(
         constructor,
         len,
+        part_of_flat,
         token_len,
         sleigh_token_fields,
         sleigh_tables,
@@ -354,6 +378,7 @@ fn body_block_and(
     let code_pos = body_block_and_pos(
         constructor,
         len,
+        part_of_flat,
         token_len,
         sleigh_token_fields,
         sleigh_tables,
@@ -382,6 +407,7 @@ fn body_block_and(
 fn body_block_and_pre(
     constructor: &ConstructorStruct,
     _len: &sleigh_rs::PatternLen,
+    part_of_flat: bool,
     _token_len: IntTypeU,
     _sleigh_token_fields: &[ProducedTokenField],
     _sleigh_tables: &[ProducedTable],
@@ -402,8 +428,29 @@ fn body_block_and_pre(
 
     //verify all the values and build all the tables
     let verifications = verifications.iter().filter_map(|ver| match ver {
+        // simple eq verifications can be ignored if part of the flat pattern
+        Verification::TokenFieldCheck {
+            field: _,
+            op: sleigh_rs::pattern::CmpOp::Eq,
+            value,
+        }
+        | Verification::ContextCheck {
+            context: _,
+            op: sleigh_rs::pattern::CmpOp::Eq,
+            value,
+        } if part_of_flat
+            && matches!(
+                value.expr().elements(),
+                [sleigh_rs::disassembly::ExprElement::Value(
+                    sleigh_rs::disassembly::ReadScope::Integer(_number)
+                )]
+            ) =>
+        {
+            None
+        }
         Verification::ContextCheck { context, op, value } => {
             Some(context_verification(
+                true,
                 &context.element(),
                 op,
                 value,
@@ -416,6 +463,7 @@ fn body_block_and_pre(
         }
         Verification::TokenFieldCheck { field, op, value } => {
             Some(field_verification(
+                true,
                 &field.element(),
                 op,
                 value,
@@ -455,6 +503,7 @@ fn body_block_and_pre(
 fn body_block_and_pos(
     constructor: &ConstructorStruct,
     _len: &sleigh_rs::PatternLen,
+    part_of_flat: bool,
     _token_len: IntTypeU,
     sleigh_token_fields: &[ProducedTokenField],
     _sleigh_tables: &[ProducedTable],
@@ -524,6 +573,7 @@ fn body_block_and_pos(
                 //TODO check recursive/always for table
                 let sub_func = sub_pattern_closure(
                     constructor,
+                    part_of_flat,
                     pattern,
                     inst_start,
                     vars,
@@ -612,6 +662,7 @@ fn body_block_and_pos(
 fn block_or_closure(
     constructor: &ConstructorStruct,
     _len: &sleigh_rs::PatternLen,
+    part_of_flat: bool,
     sleigh_token_fields: &[ProducedTokenField],
     sleigh_tables: &[ProducedTable],
     branches: &[Verification],
@@ -632,6 +683,7 @@ fn block_or_closure(
             Verification::ContextCheck { context, op, value } => {
                 let context = context.element();
                 let verification = context_verification(
+                    false,
                     &context,
                     op,
                     value,
@@ -664,6 +716,7 @@ fn block_or_closure(
                 let token_len = token_field.token().len_bytes();
 
                 let verification = field_verification(
+                    false,
                     &token_field,
                     op,
                     value,
@@ -673,7 +726,6 @@ fn block_or_closure(
                     inst_start,
                     root_token_fields,
                 );
-                let addr_type = disassembler.addr_type();
                 //token fields is only exported if in the produced list
                 let token_field_export = match sleigh_token_fields {
                     [prod] => {
@@ -716,6 +768,7 @@ fn block_or_closure(
             Verification::SubPattern { location, pattern } => {
                 let sub_func = sub_pattern_closure(
                     constructor,
+                    part_of_flat,
                     pattern,
                     inst_start,
                     vars,
@@ -802,7 +855,7 @@ fn block_or_closure(
             }
         }
     });
-    let context_struct = disassembler.context_struct();
+    let context_struct = &disassembler.context().name;
     quote! {
         |#tokens_param: &[u8], #context_instance: &mut #context_struct| {
             //used to calculate the current block len
@@ -860,7 +913,7 @@ fn pattern_cmp_token_neg(value: &sleigh_rs::pattern::CmpOp) -> TokenStream {
 }
 
 fn gen_table_parser(
-    disassembler: &dyn DisassemblerGlobal,
+    disassembler: &Disassembler,
     context_instance: &Ident,
     tokens: &Ident,
     inst_start: &Ident,
@@ -879,7 +932,7 @@ fn gen_table_parser(
 }
 
 struct BlockParserValuesDisassembly<'a> {
-    disassembler: &'a dyn DisassemblerGlobal,
+    disassembler: &'a Disassembler,
     tokens: &'a Ident,
     context_instance: &'a Ident,
     inst_start: &'a Ident,
@@ -904,7 +957,6 @@ impl<'a, 'b> DisassemblyGenerator<'a> for BlockParserValuesDisassembly<'b> {
                 let read_call = self
                     .disassembler
                     .context()
-                    .unwrap()
                     .read_call(&context, self.context_instance);
                 quote! { #DISASSEMBLY_WORK_TYPE::try_from(#read_call).unwrap()}
             }
@@ -943,7 +995,7 @@ impl<'a, 'b> DisassemblyGenerator<'a> for BlockParserValuesDisassembly<'b> {
 
 fn value_disassembly(
     value: &ConstraintValue,
-    disassembler: &dyn DisassemblerGlobal,
+    disassembler: &Disassembler,
     tokens: &Ident,
     context_instance: &Ident,
     inst_start: &Ident,
@@ -960,16 +1012,21 @@ fn value_disassembly(
 }
 
 fn verification(
+    inverted: bool,
     field: TokenStream,
     op: &sleigh_rs::pattern::CmpOp,
     value: &ConstraintValue,
-    disassembler: &dyn DisassemblerGlobal,
+    disassembler: &Disassembler,
     tokens: &Ident,
     context_instance: &Ident,
     inst_start: &Ident,
     produced_fields: &IndexMap<*const sleigh_rs::TokenField, Ident>,
 ) -> TokenStream {
-    let cons_op = pattern_cmp_token_neg(op);
+    let cons_op = if inverted {
+        pattern_cmp_token_neg(op)
+    } else {
+        pattern_cmp_token(op)
+    };
     match value.expr().elements() {
         // if the value is a simple number, just compare it directly
         [disassembly::ExprElement::Value(disassembly::ReadScope::Integer(
@@ -994,10 +1051,11 @@ fn verification(
 }
 
 fn field_verification(
+    inverted: bool,
     field: &sleigh_rs::TokenField,
     op: &sleigh_rs::pattern::CmpOp,
     value: &ConstraintValue,
-    disassembler: &dyn DisassemblerGlobal,
+    disassembler: &Disassembler,
     tokens: &Ident,
     context_instance: &Ident,
     inst_start: &Ident,
@@ -1006,6 +1064,7 @@ fn field_verification(
     let token_field = disassembler.token_field(field).unwrap();
     let field = token_field.inline_value(tokens);
     verification(
+        inverted,
         field,
         op,
         value,
@@ -1018,20 +1077,19 @@ fn field_verification(
 }
 
 fn context_verification(
+    inverted: bool,
     context: &sleigh_rs::Context,
     op: &sleigh_rs::pattern::CmpOp,
     value: &ConstraintValue,
-    disassembler: &dyn DisassemblerGlobal,
+    disassembler: &Disassembler,
     tokens: &Ident,
     context_instance: &Ident,
     inst_start: &Ident,
     produced_fields: &IndexMap<*const sleigh_rs::TokenField, Ident>,
 ) -> TokenStream {
-    let field = disassembler
-        .context()
-        .unwrap()
-        .read_call(context, context_instance);
+    let field = disassembler.context().read_call(context, context_instance);
     verification(
+        inverted,
         field,
         op,
         value,

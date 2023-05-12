@@ -6,20 +6,22 @@ use proc_macro2::{Ident, TokenStream};
 
 use quote::{format_ident, quote, ToTokens};
 
-use sleigh_rs::{GlobalAnonReference, GlobalElement, NonZeroTypeU};
+use sleigh_rs::{
+    GlobalAnonReference, GlobalElement, NonZeroTypeU, NumberUnsigned,
+};
 
 use super::formater::from_sleigh;
-use super::helper::bitrange_from_value;
-use super::{DisassemblerGlobal, WorkType};
+use super::helper::{bitrange_from_value, rotation_and_mask_from_range};
+use super::{Disassembler, ToLiteral, WorkType};
 
 #[derive(Debug, Clone)]
 pub struct ContextMemory {
     pub name: Ident,
-    pub context_len: NonZeroTypeU,
+    pub context_len: NumberUnsigned,
     //TODO clone taking the noflow in consideration
     pub contexts: IndexMap<*const sleigh_rs::Context, ContextFunctions>,
     pub globalset: GlobalSet,
-    disassembler: Weak<dyn DisassemblerGlobal>,
+    disassembler: Weak<Disassembler>,
 }
 
 #[derive(Debug, Clone)]
@@ -53,24 +55,26 @@ impl ContextMemory {
     }
 
     pub fn new(
-        disassembler: Weak<dyn DisassemblerGlobal>,
+        disassembler: Weak<Disassembler>,
         sleigh: &sleigh_rs::Sleigh,
         name: Ident,
-    ) -> Option<Self> {
-        let context_len = sleigh_rs::Sleigh::context_len(sleigh.contexts())?;
+    ) -> Self {
+        let context_len = sleigh_rs::Sleigh::context_len(sleigh.contexts())
+            .map(NonZeroTypeU::get)
+            .unwrap_or(0);
         let contexts = Self::contexts(sleigh);
         let globalset = GlobalSet {
             name: format_ident!("GlobalSet"),
             set_fun: format_ident!("set"),
             new_fun: format_ident!("new"),
         };
-        Some(Self {
+        Self {
             name,
             disassembler,
             context_len,
             contexts,
             globalset,
-        })
+        }
     }
 
     pub fn read_call(
@@ -89,11 +93,21 @@ impl ContextMemory {
         instance: &Ident,
         value: impl ToTokens,
     ) -> TokenStream {
+        let signed = context.meaning().is_signed();
         let ptr: *const _ = context;
         let context = self.contexts.get(&ptr).unwrap();
         let write_fun = &context.write;
-        let value_type = &context.value_type();
-        quote! { #instance.#write_fun(#value_type::try_from(#value).unwrap()) }
+        let value_type = context.value_type();
+        if signed {
+            quote! {
+                #instance.#write_fun(#value_type::try_from(#value).unwrap())
+            }
+        } else {
+            let mask = context.value_mask().unsuffixed();
+            quote! {
+                #instance.#write_fun(#value_type::try_from(#value & #mask).unwrap())
+            }
+        }
     }
 
     pub fn display_call(
@@ -104,10 +118,6 @@ impl ContextMemory {
         let ptr: *const _ = context;
         let display_fun = &self.contexts.get(&ptr).unwrap().display;
         quote! { #instance.#display_fun() }
-    }
-
-    pub(crate) fn context_len(&self) -> usize {
-        self.context_len.get().try_into().unwrap()
     }
 }
 
@@ -126,10 +136,15 @@ impl ContextFunctions {
         let len: u32 = sleigh.range.len().get().try_into().unwrap();
         WorkType::new_int_bits(len, signed)
     }
+    fn value_mask(&self) -> u128 {
+        let sleigh = self.context.element();
+        let len: u32 = sleigh.range.len().get().try_into().unwrap();
+        u128::MAX >> (u128::BITS - len)
+    }
     fn functions_from_type(
         &self,
-        disassembler: &dyn DisassemblerGlobal,
-        _context_type: WorkType,
+        disassembler: &Disassembler,
+        context_type: WorkType,
     ) -> TokenStream {
         let Self {
             read,
@@ -140,6 +155,14 @@ impl ContextFunctions {
         let display_element = &disassembler.display_element().name;
         let context = context.element();
         let value_type = self.value_type();
+        let from_xx = match disassembler.sleigh().endian {
+            sleigh_rs::Endian::Little => quote! {from_le},
+            sleigh_rs::Endian::Big => quote! {from_be},
+        };
+        let to_xx = match disassembler.sleigh().endian {
+            sleigh_rs::Endian::Little => quote! {to_le},
+            sleigh_rs::Endian::Big => quote! {to_be},
+        };
         let read_function = match context.meaning() {
             sleigh_rs::Meaning::Literal(_)
             | sleigh_rs::Meaning::Variable(_)
@@ -148,7 +171,7 @@ impl ContextFunctions {
                 let convert = bitrange_from_value(
                     &value,
                     value_type,
-                    quote! {self.0},
+                    quote! {#context_type::#from_xx(self.0)},
                     &context.range,
                     context.meaning.is_signed(),
                 );
@@ -165,31 +188,85 @@ impl ContextFunctions {
             sleigh_rs::Meaning::Literal(_)
             | sleigh_rs::Meaning::Variable(_)
             | sleigh_rs::Meaning::Name(_) => {
+                let (rotation, mask) =
+                    rotation_and_mask_from_range(&context.range);
+                let rotation = rotation.unsuffixed();
+                let mask = mask.unsuffixed();
                 quote! {
                     pub fn #write(&mut self, value: #value_type) {
-                        todo!();
-                        //self.0 = (self.0 & !#mask) | (value as #context_type << #rotation)
+                        let mut tmp = #context_type::#from_xx(self.0);
+                        tmp = (tmp & !(#mask << #rotation)) | ((value as #context_type & #mask) << #rotation);
+                        self.0 = tmp.#to_xx();
                     }
                 }
             }
             sleigh_rs::Meaning::Value(_, _) => todo!(),
         };
-        let display_function = match context.meaning() {
-            sleigh_rs::Meaning::Literal(_)
-            | sleigh_rs::Meaning::Variable(_)
-            | sleigh_rs::Meaning::Name(_)
-            | sleigh_rs::Meaning::Value(_, _) => {
-                quote! {
-                    pub fn #display(&mut self) -> #display_element {
-                        todo!();
-                    }
-                }
+        let display_call = disassembler.meanings().display_function_call(
+            quote! {#context_type::#from_xx(self.0)},
+            context.meaning(),
+        );
+        let display_function = quote! {
+            pub fn #display(&self) -> #display_element {
+                #display_call
             }
         };
         quote! {
             #read_function
             #write_function
             #display_function
+        }
+    }
+}
+
+impl GlobalSet {
+    fn tokens(
+        &self,
+        disassembler: &Disassembler,
+        context: &ContextMemory,
+    ) -> TokenStream {
+        let addr_type = disassembler.addr_type();
+        let Self {
+            name,
+            set_fun,
+            new_fun,
+        } = self;
+        let context_name = &context.name;
+        if context.context_len == 0 {
+            quote! {
+                #[derive(Clone, Copy, Default)]
+                pub struct #name(());
+                impl #name {
+                    pub fn #new_fun(_: #context_name) -> Self {
+                        Self(())
+                    }
+                    pub fn #set_fun(&mut self, _: Option<#addr_type>, _: impl FnOnce(&mut #context_name)) {
+                        unreachable!()
+                    }
+                }
+            }
+        } else {
+            quote! {
+                #[derive(Clone)]
+                pub struct #name {
+                    default: #context_name,
+                    branches: std::collections::HashMap<#addr_type, #context_name>,
+                }
+                impl #name {
+                    pub fn #new_fun(default: #context_name) -> Self {
+                        Self {
+                            default,
+                            branches: std::collections::HashMap::new(),
+                        }
+                    }
+                    pub fn #set_fun(&mut self, address: Option<#addr_type>, set: impl FnOnce(&mut #context_name)) {
+                        let Some(address) = address else { return };
+                        //TODO use the noflow clone instead of simple clone.
+                        let entry = self.branches.entry(address).or_insert_with(|| self.default.clone());
+                        set(entry);
+                    }
+                }
+            }
         }
     }
 }
@@ -201,45 +278,32 @@ impl ToTokens for ContextMemory {
             context_len,
             contexts,
             disassembler,
-            globalset:
-                GlobalSet {
-                    name: globalset_name,
-                    set_fun,
-                    new_fun,
-                },
+            globalset,
         } = self;
         let disassembler = disassembler.upgrade().unwrap();
-        let context_type = WorkType::unsigned_from_bytes(
-            context_len.get().try_into().unwrap(),
-        );
-        let functions = contexts.values().map(|context| {
-            context.functions_from_type(&*disassembler, context_type)
-        });
-        let addr_type = disassembler.addr_type();
+        let (context_type, impl_block) = if *context_len == 0 {
+            (quote! {()}, None)
+        } else {
+            let context_type = WorkType::unsigned_from_bytes(
+                (*context_len).try_into().unwrap(),
+            );
+            let functions = contexts.values().map(|context| {
+                context.functions_from_type(&*disassembler, context_type)
+            });
+            let impl_block = quote! {
+                impl #context_name {
+                    #(#functions)*
+                }
+            };
+            (context_type.into_token_stream(), Some(impl_block))
+        };
+        let globalset = globalset.tokens(&disassembler, self);
         tokens.extend(quote! {
-            #[derive(Clone, Copy)]
+            #[derive(Clone, Copy, Default)]
             pub struct #context_name(pub #context_type);
-            impl #context_name {
-                #(#functions)*
-            }
-            pub struct #globalset_name {
-                default: #context_name,
-                branches: std::collections::HashMap<#addr_type, #context_name>,
-            }
-            impl #globalset_name {
-                pub fn #new_fun(default: #context_name) -> Self {
-                    Self {
-                        default,
-                        branches: std::collections::HashMap::new(),
-                    }
-                }
-                pub fn #set_fun(&mut self, address: Option<#addr_type>, set: impl FnOnce(&mut #context_name)) {
-                    let Some(address) = address else { return };
-                    //TODO use the noflow clone instead of simple clone.
-                    let entry = self.branches.entry(address).or_insert_with(|| self.default.clone());
-                    set(entry);
-                }
-            }
+            #impl_block
+
+            #globalset
         });
     }
 }

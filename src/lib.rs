@@ -4,7 +4,7 @@ use std::rc::Rc;
 use sleigh_rs::{file_to_sleigh, SleighError};
 
 mod builder;
-use builder::DisassemblerDebugger;
+use builder::Disassembler;
 
 pub(crate) use sleigh_rs::{
     DisassemblyType, IntTypeU, NonZeroTypeU, NumberNonZeroSigned,
@@ -15,7 +15,8 @@ pub(crate) const DISASSEMBLY_ALLOW_OVERFLOW: bool = true;
 
 pub fn parse_debugger(
     file: impl AsRef<Path>,
-) -> Result<Rc<DisassemblerDebugger>, SleighError> {
+    debug_mode: bool,
+) -> Result<Rc<Disassembler>, SleighError> {
     let sleigh = file_to_sleigh(file.as_ref())?;
-    Ok(DisassemblerDebugger::new(Rc::new(sleigh)))
+    Ok(Disassembler::new(Rc::new(sleigh), debug_mode))
 }

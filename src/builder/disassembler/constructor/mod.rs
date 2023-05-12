@@ -11,7 +11,7 @@ use crate::builder::{
     token_field_display, token_field_final_type, DisassemblyGenerator, WorkType,
 };
 
-use super::{DisassemblerGlobal, TableEnum};
+use super::{Disassembler, TableEnum};
 
 mod disassembly;
 pub use disassembly::*;
@@ -89,7 +89,7 @@ impl ToTokens for TokenFieldField {
 
 pub struct ConstructorStruct {
     pub sleigh: Rc<sleigh_rs::Constructor>,
-    disassembler: Weak<dyn DisassemblerGlobal>,
+    disassembler: Weak<Disassembler>,
     //struct name
     pub struct_name: Ident,
     //variant name in the enum
@@ -111,7 +111,7 @@ impl ConstructorStruct {
     pub fn new(
         sleigh: Rc<sleigh_rs::Constructor>,
         tables: &IndexMap<*const sleigh_rs::Table, Rc<TableEnum>>,
-        disassembler: Weak<dyn DisassemblerGlobal>,
+        disassembler: Weak<Disassembler>,
         table_name: &str,
         number: usize,
     ) -> Self {
@@ -310,7 +310,6 @@ impl ConstructorStruct {
                         }
                         DisplayScope::Context(context) => disassembler
                             .context()
-                            .unwrap()
                             .display_call(&context.element(), &context_param),
                         DisplayScope::TokenField(ass) => {
                             let ass = ass.element();
@@ -395,8 +394,8 @@ impl ConstructorStruct {
                     #build_table
                 }
             });
-        let context_struct = disassembler.context_struct();
-        let globalset_struct = &disassembler.globalset_struct();
+        let context_struct = &disassembler.context().name;
+        let globalset_struct = &disassembler.context().globalset.name;
         let addr_type = disassembler.addr_type();
         quote! {
             fn #display_fun(
