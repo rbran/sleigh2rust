@@ -1,42 +1,38 @@
-use std::rc::Rc;
-
 use proc_macro2::{Ident, TokenStream};
-use quote::{format_ident, quote, ToTokens};
+use quote::{format_ident, quote};
 
-use super::{RegistersEnum, WorkType};
+use super::{Disassembler, WorkType, DISASSEMBLY_WORK_TYPE};
 
-pub const DISPLAY_WORK_TYPE: WorkType = super::DISASSEMBLY_WORK_TYPE;
+pub const DISPLAY_WORK_TYPE: WorkType = DISASSEMBLY_WORK_TYPE;
 #[derive(Debug, Clone)]
 pub struct DisplayElement {
     pub name: Ident,
     pub literal_var: Ident,
     pub register_var: Ident,
     pub number_var: Ident,
-    pub registers: Rc<RegistersEnum>,
 }
 impl DisplayElement {
-    pub fn new(name: Ident, registers: Rc<RegistersEnum>) -> Rc<Self> {
-        Rc::new(Self {
+    pub fn new(name: Ident) -> Self {
+        Self {
             name,
-            registers,
             literal_var: format_ident!("Literal"),
             register_var: format_ident!("Register"),
             number_var: format_ident!("Number"),
-        })
+        }
     }
-}
-
-impl ToTokens for DisplayElement {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
+    pub fn to_tokens(
+        &self,
+        tokens: &mut TokenStream,
+        disassembler: &Disassembler,
+    ) {
         let Self {
             name,
-            registers,
             literal_var,
             register_var,
             number_var,
         } = self;
-        let registers = registers.name();
-        let number_type = WorkType::NUMBER_SUPER_SIGNED;
+        let registers = disassembler.registers.name();
+        let number_type = DISPLAY_WORK_TYPE;
         tokens.extend(quote! {
             #[derive(Clone, Copy, Debug)]
             pub enum #name {

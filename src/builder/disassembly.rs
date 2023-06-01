@@ -1,14 +1,11 @@
-use std::rc::Rc;
-
 use proc_macro2::TokenStream;
 
 use quote::{quote, ToTokens};
 
 use sleigh_rs::disassembly::{
     Assertation, Assignment, Expr, ExprElement, GlobalSet, Op, OpUnary,
-    ReadScope, Variable,
+    ReadScope, Variable, VariableId,
 };
-use sleigh_rs::{Context, GlobalAnonReference};
 
 fn disassembly_op(x: impl ToTokens, op: &Op, y: impl ToTokens) -> TokenStream {
     match (crate::DISASSEMBLY_ALLOW_OVERFLOW, op) {
@@ -40,22 +37,26 @@ fn op_unary(op: &OpUnary, x: impl ToTokens) -> TokenStream {
         OpUnary::Negative => quote! {(-#x)},
     }
 }
-pub trait DisassemblyGenerator<'a> {
-    fn global_set(&self, global_set: &'a GlobalSet) -> TokenStream;
-    fn value(&self, value: &'a ReadScope) -> TokenStream;
+pub trait DisassemblyGenerator {
+    fn global_set(&self, global_set: &GlobalSet) -> TokenStream;
+    fn value(&self, value: &ReadScope) -> TokenStream;
     fn set_context(
         &self,
-        context: &GlobalAnonReference<Context>,
+        id: &sleigh_rs::ContextId,
         value: TokenStream,
     ) -> TokenStream;
-    fn new_variable(&mut self, var: &'a Rc<Variable>) -> TokenStream;
-    fn var_name(&self, var: &'a Variable) -> TokenStream;
-    fn expr(&self, expr: &'a Expr) -> TokenStream {
+    fn new_variable(
+        &mut self,
+        var_id: &VariableId,
+        variable: &Variable,
+    ) -> TokenStream;
+    fn var_name(&self, var: &VariableId) -> TokenStream;
+    fn expr(&self, expr: &Expr) -> TokenStream {
         let mut work_stack: Vec<_> = Vec::with_capacity(2);
         for ele in expr.elements().iter() {
             //the rpn stack that result in a work_stack bigger then 2 is invalid
             match (ele, work_stack.len()) {
-                (ExprElement::Value(value), _) => {
+                (ExprElement::Value { value, location: _ }, _) => {
                     work_stack.push(self.value(value))
                 }
                 (ExprElement::Op(op), 2..) => {
@@ -80,26 +81,23 @@ pub trait DisassemblyGenerator<'a> {
     }
     fn set_variable(
         &self,
-        var: &'a Variable,
+        var: &VariableId,
         value: TokenStream,
     ) -> TokenStream {
         let var_name = self.var_name(var);
         quote! { #var_name = #value; }
     }
-    fn assignment(&self, ass: &'a Assignment) -> TokenStream {
+    fn assignment(&self, ass: &Assignment) -> TokenStream {
         use sleigh_rs::disassembly::WriteScope::*;
-        let value = self.expr(ass.right());
-        match ass.left() {
-            Context(context) => {
-                let context = context.clone().into();
-                self.set_context(&context, value)
-            }
+        let value = self.expr(&ass.right);
+        match &ass.left {
+            Context(context) => self.set_context(context, value),
             Local(variable) => self.set_variable(variable, value),
         }
     }
     fn disassembly(
         &self,
-        assertations: &mut dyn Iterator<Item = &'a Assertation>,
+        assertations: &mut dyn Iterator<Item = &Assertation>,
     ) -> TokenStream {
         assertations
             .map(|ass| {

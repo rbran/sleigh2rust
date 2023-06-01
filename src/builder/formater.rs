@@ -3,7 +3,7 @@ use std::borrow::Cow;
 #[derive(Clone, Copy)]
 struct SeparateTokens<'a>(&'a str);
 
-pub fn from_sleigh<'a>(input: &'a str) -> Cow<'a, str> {
+pub fn from_sleigh(input: &str) -> Cow<'_, str> {
     input
         .find('.')
         .map(|_| Cow::Owned(input.replace('.', "_")))

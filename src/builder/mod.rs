@@ -86,22 +86,6 @@ pub enum WorkType {
 }
 
 impl WorkType {
-    pub const NUMBER_UNSIGNED: Self =
-        Self::new_int_bits(crate::NumberUnsigned::BITS, false);
-    pub const NUMBER_SIGNED: Self =
-        Self::new_int_bits(crate::NumberSigned::BITS, true);
-    pub const NUMBER_SUPER_SIGNED: Self =
-        Self::new_int_bits(crate::NumberSuperSigned::BITS, true);
-
-    pub const NUMBER_NON_ZERO_UNSIGNED: Self =
-        Self::new_int_bits(crate::NumberNonZeroUnsigned::BITS, false);
-    pub const NUMBER_NON_ZERO_SIGNED: Self =
-        Self::new_int_bits(crate::NumberNonZeroSigned::BITS, true);
-    pub const NUMBER_NON_ZERO_SUPER_SIGNED: Self =
-        Self::new_int_bits(crate::NumberNonZeroSuperSigned::BITS, true);
-    pub const DISASSEMBLY_TYPE: Self =
-        Self::new_int_bits(crate::DisassemblyType::BITS, true);
-
     pub const fn new_int_bytes(bytes: u32, signed: bool) -> Self {
         match bytes {
             1 if signed => Self::I8,
@@ -119,31 +103,19 @@ impl WorkType {
             _x => unreachable!(),
         }
     }
+
     pub const fn new_int_bits(bits: u32, signed: bool) -> Self {
         Self::new_int_bytes((bits + 7) / 8, signed)
     }
+
     pub const fn unsigned_from_bytes(bytes: u32) -> Self {
         Self::new_int_bytes(bytes, false)
     }
+
     pub const fn unsigned_from_bits(bits: u32) -> Self {
         Self::new_int_bits(bits, false)
     }
-    pub const fn is_signed(&self) -> bool {
-        match self {
-            WorkType::U8
-            | WorkType::U16
-            | WorkType::U32
-            | WorkType::U64
-            | WorkType::U128
-            | WorkType::U256 => false,
-            WorkType::I8
-            | WorkType::I16
-            | WorkType::I32
-            | WorkType::I64
-            | WorkType::I128
-            | WorkType::I256 => true,
-        }
-    }
+
     pub const fn len_bytes(&self) -> u32 {
         match self {
             WorkType::I8 | WorkType::U8 => u8::BITS / 8,
