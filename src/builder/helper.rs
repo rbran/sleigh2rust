@@ -85,6 +85,9 @@ pub fn sign_from_value(
 ) -> TokenStream {
     let sign_bit = 1u128 << (len_bits - 1);
     let mask = sign_bit - 1;
+
+    let sign_bit = sign_bit.unsuffixed();
+    let mask = mask.unsuffixed();
     quote! {(
         // if negative add the negative part
         if #raw_value & #sign_bit != 0 { -1 & !#mask } else { 0 }
