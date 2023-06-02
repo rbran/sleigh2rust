@@ -191,12 +191,16 @@ impl ContextFunctions {
         let value_type = self.value_type(disassembler);
         let context_memory =
             disassembler.sleigh.context_memory.context(self.context);
-        let memory_bits = disassembler.sleigh.context_memory.memory_bits;
-        let bit_end = memory_bits - context_memory.start();
-        let bit_start = memory_bits - context_memory.end().get();
+        let bit_end =
+            (context_type.len_bytes() as u64 * 8) - context_memory.start();
+        let bit_start =
+            (context_type.len_bytes() as u64 * 8) - context_memory.end().get();
         let bits = bit_start.try_into().unwrap()..bit_end.try_into().unwrap();
-        let convert =
-            bitrange_from_value(bits.clone(), value_type, quote! {self.0});
+        let convert = bitrange_from_value(
+            bits.clone(),
+            value_type,
+            quote! {self.0.reverse_bits()},
+        );
         let (rotation, mask) = rotation_and_mask_from_range(bits);
         let rotation = rotation.unsuffixed();
         let mask = mask.unsuffixed();
@@ -205,7 +209,7 @@ impl ContextFunctions {
                 #convert
             }
             pub fn #write(&mut self, value: #value_type) {
-                self.0 = (self.0 & !(#mask << #rotation)) | ((value as #context_type & #mask) << #rotation);
+                self.0 = ((self.0.reverse_bits() & !(#mask << #rotation)) | ((value as #context_type & #mask) << #rotation)).reverse_bits();
             }
         }
     }
