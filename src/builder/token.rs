@@ -1,15 +1,14 @@
 use std::collections::HashMap;
 
 use proc_macro2::{Ident, TokenStream};
-use quote::{format_ident, quote, ToTokens};
-use sleigh_rs::token::TokenField;
+use quote::{format_ident, quote};
 use sleigh_rs::{Endian, FieldBits, NumberNonZeroUnsigned};
 
 use crate::builder::helper::bytes_from_value;
 use crate::builder::WorkType;
 
 use super::helper::{bitrange_from_value, from_endian_bytes};
-use super::{Disassembler, Meanings, ToLiteral};
+use super::{Disassembler, ToLiteral};
 
 #[derive(Hash, PartialEq, Eq)]
 struct TokenFieldKey {
@@ -149,12 +148,4 @@ impl TokenFieldFunctions {
             });
         }
     }
-}
-
-pub fn token_field_display(
-    data: impl ToTokens,
-    token_field: &TokenField,
-    meanings: &Meanings,
-) -> TokenStream {
-    meanings.display_function_call(data, token_field.meaning())
 }

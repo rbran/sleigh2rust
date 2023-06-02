@@ -108,6 +108,7 @@ impl ContextMemory {
         let read = &self.context_functions(id).read;
         let context = disassembler.sleigh.context(id);
         disassembler.meanings.display_function_call(
+            context.bitrange.bits.len().get().try_into().unwrap(),
             quote! {#instance.#read()},
             context.meaning(),
         )

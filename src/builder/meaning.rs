@@ -290,6 +290,7 @@ impl Meanings {
     }
     pub fn display_function_call(
         &self,
+        len_bits: u32,
         value: impl ToTokens,
         meaning: sleigh_rs::meaning::Meaning,
     ) -> TokenStream {
@@ -297,6 +298,14 @@ impl Meanings {
         match meaning {
             Meaning::NoAttach(print_fmt) => {
                 let function = &self.literal_display;
+                let value = if !print_fmt.signed {
+                    value.into_token_stream()
+                } else {
+                    let final_type = WorkType::new_int_bits(len_bits, true);
+                    crate::builder::helper::sign_from_value(
+                        len_bits, final_type, value,
+                    )
+                };
                 let hex = print_fmt.base.is_hex();
                 quote! { #function(#hex, #value) }
             }

@@ -5,7 +5,7 @@ use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 
 use crate::builder::formater::from_sleigh;
-use crate::builder::{token_field_display, DisassemblyGenerator};
+use crate::builder::DisassemblyGenerator;
 
 use super::Disassembler;
 
@@ -231,10 +231,10 @@ impl ConstructorStruct {
                             let var_name = self.ass_fields.get(ass).unwrap();
                             let token_field =
                                 disassembler.sleigh.token_field(*ass);
-                            token_field_display(
+                            disassembler.meanings.display_function_call(
+                                token_field.bits.len().get().try_into().unwrap(),
                                 quote! {self.#var_name},
-                                token_field,
-                                &disassembler.meanings,
+                                token_field.meaning(),
                             )
                         }
                         DisplayScope::Disassembly(var) => {

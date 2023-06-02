@@ -45,11 +45,13 @@ impl DisplayElement {
                     match self {
                         Self::Literal(lit) => lit.fmt(f),
                         Self::Register(reg) => reg.fmt(f),
-                        Self::Number(hex, value) => match (*hex, value.is_negative()) {
-                            (true, true) => write!(f, "-0x{:x}", value.abs()),
-                            (true, false) => write!(f, "0x{:x}", value),
-                            (false, _) => value.fmt(f),
-                        },
+                        Self::Number(true, value) if !value.is_negative() => {
+                            write!(f, "0x{:x}", value)
+                        }
+                        Self::Number(true, value) => {
+                            write!(f, "-0x{:x}", value.abs())
+                        }
+                        Self::Number(false, value) => value.fmt(f),
                     }
                 }
             }
