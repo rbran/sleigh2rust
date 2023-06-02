@@ -116,6 +116,23 @@ impl WorkType {
         Self::new_int_bits(bits, false)
     }
 
+    pub const fn is_signed(&self) -> bool {
+        match self {
+            WorkType::U8
+            | WorkType::U16
+            | WorkType::U32
+            | WorkType::U64
+            | WorkType::U128
+            | WorkType::U256 => false,
+            WorkType::I8
+            | WorkType::I16
+            | WorkType::I32
+            | WorkType::I64
+            | WorkType::I128
+            | WorkType::I256 => true,
+        }
+    }
+
     pub const fn len_bytes(&self) -> u32 {
         match self {
             WorkType::I8 | WorkType::U8 => u8::BITS / 8,

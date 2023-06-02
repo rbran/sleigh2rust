@@ -1,9 +1,10 @@
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
-use super::{Disassembler, WorkType, DISASSEMBLY_WORK_TYPE};
+use super::{Disassembler, WorkType};
 
-pub const DISPLAY_WORK_TYPE: WorkType = DISASSEMBLY_WORK_TYPE;
+pub const DISPLAY_WORK_TYPE: WorkType =
+    WorkType::new_int_bits(sleigh_rs::NumberSigned::BITS, false);
 #[derive(Debug, Clone)]
 pub struct DisplayElement {
     pub name: Ident,
@@ -38,20 +39,23 @@ impl DisplayElement {
             pub enum #name {
                 #literal_var(&'static str),
                 #register_var(#registers),
-                #number_var(bool, #number_type),
+                #number_var(bool, bool, #number_type),
             }
             impl core::fmt::Display for #name {
                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                     match self {
                         Self::Literal(lit) => lit.fmt(f),
                         Self::Register(reg) => reg.fmt(f),
-                        Self::Number(true, value) if !value.is_negative() => {
+                        Self::Number(true, false, value) => {
                             write!(f, "0x{:x}", value)
                         }
-                        Self::Number(true, value) => {
-                            write!(f, "-0x{:x}", value.abs())
+                        Self::Number(true, true, value) => {
+                            write!(f, "-0x{:x}", value)
                         }
-                        Self::Number(false, value) => value.fmt(f),
+                        Self::Number(false, false, value) => value.fmt(f),
+                        Self::Number(false, true, value) => {
+                            write!(f, "-{:x}", value)
+                        }
                     }
                 }
             }

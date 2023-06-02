@@ -10,7 +10,8 @@ use crate::builder::{Disassembler, DisassemblyGenerator, ToLiteral, WorkType};
 
 use super::ConstructorStruct;
 
-pub const DISASSEMBLY_WORK_TYPE: WorkType = WorkType::new_int_bits(crate::DisassemblyType::BITS, true);
+pub const DISASSEMBLY_WORK_TYPE: WorkType =
+    WorkType::new_int_bits(crate::DisassemblyType::BITS, true);
 pub struct DisassemblyDisplay<'a> {
     pub disassembler: &'a Disassembler,
     pub constructor: &'a ConstructorStruct,
@@ -74,9 +75,11 @@ impl DisassemblyDisplay<'_> {
 
 impl ToTokens for DisassemblyDisplay<'_> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let constructor = self.disassembler.sleigh
-        .table(self.constructor.table_id)
-        .constructor(self.constructor.constructor_id);
+        let constructor = self
+            .disassembler
+            .sleigh
+            .table(self.constructor.table_id)
+            .constructor(self.constructor.constructor_id);
         let mut asses = constructor
             .pattern
             .blocks()

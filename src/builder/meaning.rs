@@ -1,7 +1,7 @@
-use proc_macro2::{Ident, Literal, TokenStream};
+use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 
-use super::{Disassembler, WorkType, DISPLAY_WORK_TYPE};
+use super::{Disassembler, ToLiteral, WorkType, DISPLAY_WORK_TYPE};
 use crate::{NonZeroTypeU, NumberSuperSigned};
 
 #[derive(Debug, Clone)]
@@ -55,8 +55,7 @@ impl VarMeaning {
         } = self;
         let sleigh = disassembler.sleigh.attach_varnode(*id);
         let display_element = &disassembler.display.name;
-        let ele_index =
-            sleigh.0.iter().map(|(i, _v)| Literal::usize_unsuffixed(*i));
+        let ele_index = sleigh.0.iter().map(|(i, _v)| i.unsuffixed());
         let ele_value = sleigh.0.iter().map(|(_i, v)| {
             let regs = disassembler.registers.name();
             let variant = disassembler.registers.register(*v);
@@ -120,8 +119,7 @@ impl NameMeaning {
         let param_type = &self.index_type;
         let display_element = &disassembler.display.name;
         let attach = disassembler.sleigh.attach_literal(self.id);
-        let ele_index =
-            attach.0.iter().map(|(i, _v)| Literal::usize_unsuffixed(*i));
+        let ele_index = attach.0.iter().map(|(i, _v)| i.unsuffixed());
         let ele_value = attach.0.iter().map(|(_i, v)| v);
         let display_func = &self.display_func;
         let index_type = &self.index_type;
@@ -194,16 +192,24 @@ impl ValueMeaning {
         let param_type = &self.index_type;
         let display_element = &disassembler.display.name;
         let sleigh = disassembler.sleigh.attach_number(self.id);
-        let ele_index =
-            sleigh.0.iter().map(|(i, _v)| Literal::usize_unsuffixed(*i));
-        let ele_value = sleigh
-            .0
-            .iter()
-            .map(|(_i, v)| Literal::i128_unsuffixed(v.signed_super()));
+        let ele_index = sleigh.0.iter().map(|(i, _v)| i.unsuffixed());
+        let ele_value =
+            sleigh.0.iter().map(|(_i, v)| v.signed_super().unsuffixed());
         let display_func = &self.display_func;
         let value_func = &self.value_func;
         let value_type = &self.value_type;
         let index_type = &self.index_type;
+
+        let number_ele = &disassembler.display.number_var;
+        let into_display = if value_type.is_signed() {
+            quote! {
+                <#display_element>::#number_ele(hex, value.is_negative(), value.abs() as #DISPLAY_WORK_TYPE)
+            }
+        } else {
+            quote! {
+                <#display_element>::#number_ele(hex, false, value as #DISPLAY_WORK_TYPE)
+            }
+        };
         tokens.extend(quote! {
             fn #value_func<T>(num: T) -> #value_type
             where
@@ -221,8 +227,7 @@ impl ValueMeaning {
                 <#param_type as TryFrom<T>>::Error: core::fmt::Debug,
             {
                 let value = #value_func(num);
-                let value = #DISPLAY_WORK_TYPE::try_from(value).unwrap();
-                <#display_element>::Number(hex, value)
+                #into_display
             }
         });
     }
@@ -230,7 +235,6 @@ impl ValueMeaning {
 
 #[derive(Debug, Clone)]
 pub struct Meanings {
-    pub literal_display: Ident,
     pub vars: Vec<VarMeaning>,
     pub names: Vec<NameMeaning>,
     pub values: Vec<ValueMeaning>,
@@ -285,7 +289,6 @@ impl Meanings {
             vars,
             names,
             values,
-            literal_display: format_ident!("meaning_number"),
         }
     }
     pub fn display_function_call(
@@ -297,17 +300,16 @@ impl Meanings {
         use sleigh_rs::meaning::Meaning;
         match meaning {
             Meaning::NoAttach(print_fmt) => {
-                let function = &self.literal_display;
-                let value = if !print_fmt.signed {
-                    value.into_token_stream()
+                let hex = print_fmt.base.is_hex();
+                if !print_fmt.signed {
+                    quote! { DisplayElement::Number(#hex, false, #value as #DISPLAY_WORK_TYPE) }
                 } else {
                     let final_type = WorkType::new_int_bits(len_bits, true);
-                    crate::builder::helper::sign_from_value(
+                    let value = crate::builder::helper::sign_from_value(
                         len_bits, final_type, value,
-                    )
-                };
-                let hex = print_fmt.base.is_hex();
-                quote! { #function(#hex, #value) }
+                    );
+                    quote! { DisplayElement::Number(#hex, #value.is_negative(), #value.abs() as #DISPLAY_WORK_TYPE) }
+                }
             }
             Meaning::Varnode(vars) => {
                 let function = &self.vars[vars.0].display_func;
@@ -359,20 +361,7 @@ impl Meanings {
         tokens: &mut TokenStream,
         disassembler: &Disassembler,
     ) {
-        let literal_func = &self.literal_display;
         let display_type = &disassembler.display.name;
-        tokens.extend(quote! {
-            fn #literal_func<T>(hex: bool, num: T) -> #display_type
-            where
-                #DISPLAY_WORK_TYPE: TryFrom<T>,
-                <#DISPLAY_WORK_TYPE as TryFrom<T>>::Error: core::fmt::Debug,
-            {
-                #display_type::Number(
-                    hex,
-                    #DISPLAY_WORK_TYPE::try_from(num).unwrap(),
-                )
-            }
-        });
         for variable in self.vars.iter() {
             variable.to_tokens(tokens, disassembler);
         }

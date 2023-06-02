@@ -5,7 +5,7 @@ use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 
 use crate::builder::formater::from_sleigh;
-use crate::builder::DisassemblyGenerator;
+use crate::builder::{DisassemblyGenerator, DISPLAY_WORK_TYPE};
 
 use super::Disassembler;
 
@@ -240,7 +240,8 @@ impl ConstructorStruct {
                         DisplayScope::Disassembly(var) => {
                             let vars = disassembly.vars.borrow();
                             let var = vars.get(var).unwrap();
-                            quote! {<#display_struct>::Number(true, #var)}
+                            let number_ele = &disassembler.display.number_var;
+                            quote! {<#display_struct>::#number_ele(true, #var.is_negative(), #var.abs() as #DISPLAY_WORK_TYPE)}
                         }
                         DisplayScope::Space => {
                             quote! {<#display_struct>::Literal(" ")}
