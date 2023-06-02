@@ -298,7 +298,6 @@ impl ConstructorStruct {
                     }
                 });
                 quote! {
-                    #add_mneumonic
                     #extend
                     #build_table
                 }
@@ -316,6 +315,7 @@ impl ConstructorStruct {
                 #global_set_param: &mut #globalset_struct,
             ) {
                 #disassembly_body
+                #add_mneumonic
                 #(#displays)*
             }
         }
