@@ -361,7 +361,6 @@ impl Meanings {
         tokens: &mut TokenStream,
         disassembler: &Disassembler,
     ) {
-        let display_type = &disassembler.display.name;
         for variable in self.vars.iter() {
             variable.to_tokens(tokens, disassembler);
         }
