@@ -5,7 +5,7 @@ use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 
 use crate::builder::formater::from_sleigh;
-use crate::builder::{DisassemblyGenerator, DISPLAY_WORK_TYPE};
+use crate::builder::{DisassemblyGenerator, DISPLAY_WORK_TYPE, ToLiteral};
 
 use super::Disassembler;
 
@@ -239,9 +239,24 @@ impl ConstructorStruct {
                         }
                         DisplayScope::Disassembly(var) => {
                             let vars = disassembly.vars.borrow();
-                            let var = vars.get(var).unwrap();
+                            let var_name = vars.get(var).unwrap();
                             let number_ele = &disassembler.display.number_var;
-                            quote! {<#display_struct>::#number_ele(true, #var.is_negative(), #var.abs() as #DISPLAY_WORK_TYPE)}
+                            use sleigh_rs::disassembly::VariableType;
+                            match constructor.pattern.disassembly_var(*var).value_type {
+                                VariableType::Reference(space_id) => {
+                                    let space = disassembler.sleigh.space(space_id);
+                                    let space_addr_len = space.addr_bytes.get() * 8;
+                                    let mask = (u128::MAX >> (u128::BITS as u64 - space_addr_len)).unsuffixed();
+                                    quote! {<#display_struct>::#number_ele(true, false, (#var_name.abs() & #mask) as #DISPLAY_WORK_TYPE)}
+                                },
+                                VariableType::Value(Some(len)) => {
+                                    let mask = (u128::MAX >> (u128::BITS as u64 - len.get())).unsuffixed();
+                                    quote! {<#display_struct>::#number_ele(true, false, (#var_name.bas() & #mask) as #DISPLAY_WORK_TYPE)}
+                                },
+                                VariableType::Value(None) => {
+                                    quote! {<#display_struct>::#number_ele(true, #var_name.is_negative(), #var_name.abs() as #DISPLAY_WORK_TYPE)}
+                                }
+                            }
                         }
                         DisplayScope::Space => {
                             quote! {<#display_struct>::Literal(" ")}
