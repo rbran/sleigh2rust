@@ -126,9 +126,9 @@ impl TokenFieldFunctions {
                 let bytes_start = bytes_start.unsuffixed();
                 let bytes_end = bytes_end.unsuffixed();
                 quote! {
-                    let #bytes = [0u8; #token_type_bytes];
+                    let mut #bytes = [0u8; #token_type_bytes];
                     #bytes[#bytes_start..#bytes_end]
-                        .copy_from_slice(#tokens_param[0..#token_bytes_un]);
+                        .copy_from_slice(&#tokens_param[0..#token_bytes_un]);
                     let #value = #token_type::#from_endian_call(#bytes);
                     #convert
                 }
