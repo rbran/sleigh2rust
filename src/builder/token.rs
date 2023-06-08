@@ -123,6 +123,8 @@ impl TokenFieldFunctions {
                     *read_type,
                     &value,
                 );
+                let bytes_start = bytes_start.unsuffixed();
+                let bytes_end = bytes_end.unsuffixed();
                 quote! {
                     let #bytes = [0u8; #token_type_bytes];
                     #bytes[#bytes_start..#bytes_end]
