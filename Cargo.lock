@@ -106,7 +106,7 @@ dependencies = [
 
 [[package]]
 name = "sleigh2rust"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bitvec",
  "ethnum",

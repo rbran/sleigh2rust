@@ -1,6 +1,6 @@
 [package]
 name = "sleigh2rust"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 readme = "README.md"
 repository = "https://github.com/rbran/sleigh2rust"
