@@ -21,7 +21,7 @@ pub struct ConstructorStruct {
     //struct name
     pub struct_name: Ident,
     //variant name in the enum
-    pub variant_name: Ident,
+    pub enum_name: Ident,
     //display function
     pub display_fun: Ident,
     pub disassembly_fun: Ident,
@@ -135,7 +135,7 @@ impl ConstructorStruct {
             };
 
         Self {
-            variant_name: format_ident!("Var{}", number),
+            enum_name: format_ident!("Var{}", number),
             struct_name,
             display_fun: format_ident!("display_extend"),
             disassembly_fun: format_ident!("disassembly"),
@@ -151,7 +151,7 @@ impl ConstructorStruct {
         let Self {
             display_fun,
             struct_name: _,
-            variant_name: _,
+            enum_name: _,
             disassembly_fun: _,
             parser_fun: _,
             constructor_id,
@@ -347,7 +347,7 @@ impl ConstructorStruct {
             table_fields,
             ass_fields,
             parser_fun,
-            variant_name: _,
+            enum_name: _,
             display_fun: _,
             disassembly_fun: _,
             constructor_id,

@@ -66,19 +66,25 @@ impl TableEnum {
         } = self;
         let table = disassembler.sleigh.table(*table_id);
         let constructors_structs = constructors.iter();
-        let variants_names_1 = constructors.iter().map(|con| &con.variant_name);
-        let variants_names_2 = variants_names_1.clone();
-        let variants_names_3 = variants_names_1.clone();
-        let variants_struct_1 = constructors.iter().map(|con| &con.struct_name);
-        let variants_struct_2 = variants_struct_1.clone();
+        let constructor_enum_name_1 = constructors.iter().map(|con| &con.enum_name);
+        let constructor_enum_name_2 = constructor_enum_name_1.clone();
+        let constructor_struct = constructors.iter().map(|con| &con.struct_name);
         let display_struct_name = &disassembler.display.name;
-        let variants_display_fun =
-            constructors.iter().map(|con| &con.display_fun);
-        let variants_parser_fun =
-            constructors.iter().map(|con| &con.parser_fun);
-        let variants_min_len = constructors.iter().map(|con| {
+        let variant_names = table.matcher_order.iter().map(|matcher| {
+            &self.constructors[matcher.constructor.0].enum_name
+        });
+        let variant_structs = table.matcher_order.iter().map(|matcher| {
+            &self.constructors[matcher.constructor.0].struct_name
+        });
+        let variant_display_fun = table.matcher_order.iter().map(|matcher| {
+            &self.constructors[matcher.constructor.0].display_fun
+        });
+        let variants_parser_fun = table.matcher_order.iter().map(|matcher| {
+            &self.constructors[matcher.constructor.0].parser_fun
+        });
+        let variants_min_len = table.matcher_order.iter().map(|matcher| {
             table
-                .constructor(con.constructor_id)
+                .constructor(matcher.constructor)
                 .pattern
                 .len
                 .min()
@@ -86,45 +92,46 @@ impl TableEnum {
         });
 
         //only verify constructors byte_pattern if not in debug mode
-        let variants_constraint = constructors.iter().map(|con| {
-            (!disassembler.debug).then(|| {
-                let constructor = table.constructor(con.constructor_id);
-                let context = PatternByte::from_bit_constraints(constructor.context_bits());
-                let pattern = PatternByte::from_bit_constraints(constructor.pattern_bits());
-                let (context_value, context_mask) = context.into_iter().enumerate().fold(
-                    (0u128, 0u128),
-                    |(acc_value, acc_mask), (byte_num, byte)| {
-                        (
-                            acc_value | ((byte.defined_value() as u128) << (byte_num * 8)),
-                            acc_mask | ((byte.defined_bits() as u128) << (byte_num * 8)),
-                        )
-                    },
-                );
-                //only constraint if mask != 0
-                let pattern_constraint = pattern
-                    .into_iter()
-                    .enumerate()
-                    .filter(|(_, byte)| byte.defined_bits() != 0)
-                    .map(|(i, byte)| {
-                        let i = i.unsuffixed();
-                        let value = byte.defined_value().unsuffixed();
-                        let mask = byte.defined_bits().unsuffixed();
-                        quote! { (tokens_param[#i] & #mask) == #value}
-                    });
-                let context_constraint = (context_mask != 0)
-                    .then(|| {
-                        let context_value = context_value.unsuffixed();
-                        let context_mask = context_mask.unsuffixed();
-                        quote! { context_param.0 & #context_mask == #context_value }
-                    })
-                    .into_iter();
+        let variants_constraint = table.matcher_order.iter().map(|matcher| {
+                (!disassembler.debug).then(|| {
+                    let constructor = table.constructor(matcher.constructor);
+                    let (context, token) = constructor.variant(matcher.variant);
+                    let context = PatternByte::from_bit_constraints(context);
+                    let token = PatternByte::from_bit_constraints(token);
+                    let (context_value, context_mask) = context.into_iter().enumerate().fold(
+                        (0u128, 0u128),
+                        |(acc_value, acc_mask), (byte_num, byte)| {
+                            (
+                                acc_value | ((byte.defined_value() as u128) << (byte_num * 8)),
+                                acc_mask | ((byte.defined_bits() as u128) << (byte_num * 8)),
+                            )
+                        },
+                    );
+                    //only constraint if mask != 0
+                    let pattern_constraint = token
+                        .into_iter()
+                        .enumerate()
+                        .filter(|(_, byte)| byte.defined_bits() != 0)
+                        .map(|(i, byte)| {
+                            let i = i.unsuffixed();
+                            let value = byte.defined_value().unsuffixed();
+                            let mask = byte.defined_bits().unsuffixed();
+                            quote! { (tokens_param[#i] & #mask) == #value}
+                        });
+                    let context_constraint = (context_mask != 0)
+                        .then(|| {
+                            let context_value = context_value.unsuffixed();
+                            let context_mask = context_mask.unsuffixed();
+                            quote! { context_param.0 & #context_mask == #context_value }
+                        })
+                        .into_iter();
 
-                context_constraint
-                    .chain(pattern_constraint)
-                    .fold(quote! {}, |mut acc, x| {
-                        acc.extend(quote! {&& #x});
-                        acc
-                    })
+                    context_constraint
+                        .chain(pattern_constraint)
+                        .fold(quote! {}, |mut acc, x| {
+                            acc.extend(quote! {&& #x});
+                            acc
+                        })
             })
         });
         let addr_type = &disassembler.addr_type;
@@ -136,7 +143,7 @@ impl TableEnum {
         tokens.extend(quote! {
             #[derive(Clone, Debug)]
             enum #enum_name {
-                #(#variants_names_1(#variants_struct_1)),*
+                #(#constructor_enum_name_1(#constructor_struct)),*
             }
             impl #enum_name {
                 fn #display_fun(
@@ -148,7 +155,7 @@ impl TableEnum {
                     global_set_param: &mut #globalset_struct,
                 ) {
                     match self {
-                        #(Self::#variants_names_2(x) => x.#variants_display_fun(
+                        #(Self::#constructor_enum_name_2(x) => x.#variant_display_fun(
                               display,
                               context,
                               inst_start,
@@ -168,13 +175,13 @@ impl TableEnum {
                     //try to parse each of the constructors, return if success
                     #(if tokens_param.len() >= #variants_min_len #variants_constraint {
                         if let Some((inst_len, parsed)) =
-                          #variants_struct_2::#variants_parser_fun(
+                          #variant_structs::#variants_parser_fun(
                             tokens_param,
                             &mut context_current,
                             inst_start,
                         ) {
                             *context_param = context_current;
-                            return Some((inst_len, Self::#variants_names_3(parsed)));
+                            return Some((inst_len, Self::#variant_names(parsed)));
                         }
                     })*
                     None
