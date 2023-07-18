@@ -95,7 +95,7 @@ impl TableEnum {
         let variants_constraint = table.matcher_order.iter().map(|matcher| {
                 (!disassembler.debug).then(|| {
                     let constructor = table.constructor(matcher.constructor);
-                    let (context, token) = constructor.variant(matcher.variant);
+                    let (context, token) = constructor.variant(matcher.variant_id);
                     let context = PatternByte::from_bit_constraints(context);
                     let token = PatternByte::from_bit_constraints(token);
                     let (context_value, context_mask) = context.into_iter().enumerate().fold(
